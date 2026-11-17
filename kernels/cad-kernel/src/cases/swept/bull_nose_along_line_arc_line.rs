@@ -3,9 +3,11 @@
 //! upright axis runs from (0, 0) along x to (20, 0), a quarter turn about the vertical line through
 //! (20, 10) to (30, 10), carried rigidly, and along +y to (30, 30).
 //!
-//! Refused by the kernel, after about five minutes: the solid its arrangement selected disagrees
-//! with the sweep's definition at a witness point inside the bend, at the height of the mill's
-//! flat bottom (`Unbuilt::Wrong`), and it never returns a solid built wrong.
+//! Until 0.15.0 the kernel refused it, after about five minutes: the solid its arrangement
+//! selected disagreed with the sweep's definition at a witness point inside the bend, at the
+//! height of the mill's flat bottom (`Unbuilt::Wrong`). Since 0.15.0 a tool of revolution's path
+//! of pieces is cut from the blank piece by piece (`swept::pieces`), each piece's sweep in closed
+//! form: the slides square to the mill's axis and the turn about a line along it.
 use crate::sketch::block;
 use cad_kernel::build::{revolve, Profile, ProfileEdge};
 use cad_kernel::geom::{tolerance, Frame, V};
@@ -77,10 +79,10 @@ pub fn build() -> Result<Brep, String> {
     // the kernel's path of pieces, checked to meet itself at each join
     let size = stock.size().max(tool.size());
     let path = Trajectory::pieces(pieces, tolerance(size), size)?;
-    // the kernel's closed swept solid cut from the block on one arrangement, its pieces' sweeps
-    // united: under each slide square to the mill's axis its round's top and bottom rings and its
-    // meridians square to the slide, under the turn about an axis along its own its meridians in
-    // the plane through both axes
+    // the kernel's closed swept solid cut from the block piece by piece, each piece's sweep in
+    // closed form: under each slide square to the mill's axis its round's top and bottom rings and
+    // its meridians square to the slide, under the turn about an axis along its own its meridians
+    // in the plane through both axes
     cut_from(&stock, &tool, &path, [0., end], BAR, tolerance(size))
         .map_err(|why| format!("the mill's sweep not built: {why:?}"))
 }

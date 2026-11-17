@@ -4,6 +4,11 @@
 //! meridians and round 15 circles near its pole, then spot-faced and drilled at twelve points
 //! square to it. Every move is a slide, a turn about z or a turn about a level line through the
 //! origin.
+//!
+//! Refused, by the kernel, in about three seconds (0.14.0 ran past the board's two minutes): "a
+//! cutter's sweep not built: Curved { at: [29.16…, 0.0, −74.49…] }" — since 0.15.0 a path of
+//! pieces is cut piece by piece (`swept::pieces`), and a piece whose sweep has no closed form is
+//! the closed class's alone, which refuses this one (`Unbuilt::Curved`).
 use crate::cnc::{cutter, standing, Cutter, Program};
 use cad_kernel::build::{disc, prism};
 use cad_kernel::geom::tolerance;
