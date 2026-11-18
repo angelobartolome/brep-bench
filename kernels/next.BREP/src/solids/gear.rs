@@ -16,8 +16,8 @@
 //! Every slice must have the same corners in the same order; the slices' closed loops (Q, out
 //! along the first ray, the curve, back along the last) are lofted by the kernel into the
 //! space's cutter.
-use super::p;
 use crate::Refusal;
+use std::f64::consts::TAU;
 use brep_kernel::{interpolate_curve, loft_profile_brep, make_line, BrepSolid, NurbsCurve, Vec3};
 
 /// A generating motion and its tool, from the case.
@@ -72,36 +72,52 @@ fn best<G: Generating>(gear: &G, x: Vec3) -> (f64, u32) {
     top
 }
 
-/// One slice of the space: the plane z = `z`, seen from `q` (in that plane), its rays at the
-/// angles in [`from`, `to`] measured from the direction `toward` (a unit vector in the plane)
-/// anticlockwise about +z.
+/// One slice of the space: a surface given by `place`, from coordinates (a, b) in it, seen from
+/// `q`, its rays straight in (a, b) at the angles in [`from`, `to`] measured from the direction
+/// `toward` (a unit vector) anticlockwise; `air` says where (a, b) lies outside the blank, past
+/// its face, where the space is counted in.
 pub struct Slice {
-    pub z: f64,
     pub q: [f64; 2],
     pub toward: [f64; 2],
     pub from: f64,
     pub to: f64,
-    pub r_top: f64,
     /// Farthest a ray is followed (past any part of the space).
     pub reach: f64,
+    pub place: Box<dyn Fn([f64; 2]) -> Vec3 + Send + Sync>,
+    /// Where (a, b) is decided without the tool (air past the blank's face, or a plane bounding
+    /// what is traced): whether it is in, and the label of that bound.
+    pub bound: Box<dyn Fn([f64; 2]) -> Option<(bool, u32)> + Send + Sync>,
+    /// Trace the material instead: a point is in where the tool never holds it.
+    pub invert: bool,
+    /// The rays go all the way round Q (from −π to π, the seam inside one piece): the loop is
+    /// the curve alone.
+    pub closed: bool,
+}
+
+/// A slice's `bound` for air past the blank's face (`air` true there), counted in the space.
+pub fn air(f: impl Fn([f64; 2]) -> bool + Send + Sync + 'static) -> Box<dyn Fn([f64; 2]) -> Option<(bool, u32)> + Send + Sync> {
+    Box::new(move |q| if f(q) { Some((true, RIM)) } else { None })
 }
 
 impl Slice {
-    fn ray(&self, beta: f64, s: f64) -> Vec3 {
+    fn at(&self, beta: f64, s: f64) -> [f64; 2] {
         let (c, sn) = (beta.cos(), beta.sin());
         let u = [c * self.toward[0] - sn * self.toward[1], sn * self.toward[0] + c * self.toward[1]];
-        p(self.q[0] + s * u[0], self.q[1] + s * u[1], self.z)
+        [self.q[0] + s * u[0], self.q[1] + s * u[1]]
+    }
+
+    fn ray(&self, beta: f64, s: f64) -> Vec3 {
+        (self.place)(self.at(beta, s))
     }
 
     /// Whether the point at distance `s` along the ray at `beta` is in the space or in the air
-    /// past r_top, and what bounds it there.
+    /// past the blank's face, and what bounds it there.
     fn inside<G: Generating>(&self, gear: &G, beta: f64, s: f64) -> (bool, u32) {
-        let x = self.ray(beta, s);
-        if x.x.hypot(x.y) > self.r_top {
-            return (true, RIM);
+        if let Some(decided) = (self.bound)(self.at(beta, s)) {
+            return decided;
         }
-        let (m, bind) = best(gear, x);
-        (m >= 0.0, bind)
+        let (m, bind) = best(gear, self.ray(beta, s));
+        (if self.invert { m < 0.0 } else { m >= 0.0 }, bind)
     }
 
     /// The ray's end (distance D) and what binds there.
@@ -121,10 +137,14 @@ impl Slice {
                         b = m;
                     }
                 }
-                // What binds at the boundary: the circle where the inside side is air, else
-                // the tool's inequalities just inside it.
-                let air = self.ray(beta, a);
-                let bind = if air.x.hypot(air.y) > self.r_top - 1e-9 { RIM } else { best(gear, air).1 };
+                // What binds at the boundary: the face where the inside side is air, else the
+                // tool's inequalities just inside it.
+                // What binds there: a bound on either side, else the tool's inequalities on the
+                // side the tool holds.
+                let bind = match ((self.bound)(self.at(beta, a)), (self.bound)(self.at(beta, b))) {
+                    (Some((_, label)), _) | (None, Some((_, label))) => label,
+                    _ => best(gear, self.ray(beta, if self.invert { b } else { a })).1,
+                };
                 return Ok((0.5 * (a + b), bind));
             }
             last = s;
@@ -150,51 +170,103 @@ pub fn corners<G: Generating>(gear: &G, slice: &Slice, samples: usize) -> Result
     let mut labels = vec![ends[0]];
     for i in 0..samples {
         if ends[i + 1] != ends[i] {
-            let (mut a, mut b) = (betas[i], betas[i + 1]);
-            for _ in 0..44 {
-                let m = 0.5 * (a + b);
-                if slice.end(gear, m)?.1 == ends[i] {
-                    a = m;
-                } else {
-                    b = m;
+            // Bisect for where the left label ends; a piece too short for the samples to see
+            // shows as another label just past it, and is followed in turn.
+            let (mut start, mut left) = (betas[i], ends[i]);
+            for _ in 0..8 {
+                let (mut a, mut b) = (start, betas[i + 1]);
+                for _ in 0..44 {
+                    let m = 0.5 * (a + b);
+                    if slice.end(gear, m)?.1 == left {
+                        a = m;
+                    } else {
+                        b = m;
+                    }
                 }
+                let next = slice.end(gear, b)?.1;
+                cuts.push(0.5 * (a + b));
+                labels.push(next);
+                if next == ends[i + 1] {
+                    break;
+                }
+                (start, left) = (b, next);
             }
-            cuts.push(0.5 * (a + b));
-            labels.push(ends[i + 1]);
         }
     }
     cuts.push(slice.to);
     Ok(Corners { cuts, labels })
 }
 
-/// The pieces every slice must have, in order. A slice whose pieces differ (one shrinking away
-/// between slices) is refused: joining it to a neighbour would put a corner inside a fitted
-/// curve, so the slices are to be taken where the pieces hold.
-pub fn common(all: &[Corners]) -> Result<Vec<u32>, Refusal> {
-    let first = &all[0].labels;
-    for c in all {
-        if &c.labels != first {
+/// The pieces every slice must have, in order. A piece some slices lack (a face of the space
+/// that grows from a point between two slices) is given to those slices as a thin strip split
+/// off the start of the piece that follows it there (`strip` of that piece's angles): its points
+/// are still exact points of the boundary, so the loft's face for it narrows to that strip on
+/// the side where the face is not, and only the loft's interpolation across the place where the
+/// face begins is not exact.
+pub fn common(all: &[Corners], strip: f64) -> Result<Vec<Corners>, Refusal> {
+    let mut out: Vec<Corners> = all.iter().map(|c| Corners { cuts: c.cuts.clone(), labels: c.labels.clone() }).collect();
+    let fullest = all.iter().max_by_key(|c| c.labels.len()).expect("slices").labels.clone();
+    for (k, &label) in fullest.iter().enumerate() {
+        if out.iter().all(|c| c.labels.contains(&label)) {
+            continue;
+        }
+        if k == 0 || k + 1 == fullest.len() {
+            return Err(Refusal::from("a piece of the tooth space's boundary that some slices lack lies at an end"));
+        }
+        let (before, after) = (fullest[k - 1], fullest[k + 1]);
+        for c in out.iter_mut() {
+            if c.labels.contains(&label) {
+                continue;
+            }
+            let i = (0..c.labels.len() - 1)
+                .find(|&i| c.labels[i] == before && c.labels[i + 1] == after)
+                .ok_or_else(|| Refusal::from("the tooth space's pieces come in another order between slices"))?;
+            let (start, end) = (c.cuts[i + 1], c.cuts[i + 2]);
+            c.cuts.insert(i + 2, start + strip * (end - start));
+            c.labels.insert(i + 1, label);
+        }
+    }
+    let first = out[0].labels.clone();
+    for c in &out {
+        if c.labels != first {
             return Err(Refusal::from(format!(
                 "the tooth space's boundary changes its pieces between slices ({first:?} against {:?})",
                 c.labels
             )));
         }
     }
-    Ok(first.clone())
+    Ok(out)
+}
+
+/// Whether the boundary turns by less than `tolerance` radians across the angle `beta`.
+fn tangent_across<G: Generating>(gear: &G, slice: &Slice, beta: f64, tolerance: f64) -> Result<bool, Refusal> {
+    let h = 1e-4 * (slice.to - slice.from);
+    let mut q = Vec::new();
+    for k in [-2.0, -1.0, 1.0, 2.0] {
+        let b = beta + k * h;
+        q.push(slice.ray(b, slice.end(gear, b)?.0));
+    }
+    let (u, v) = (q[1].sub(q[0]), q[3].sub(q[2]));
+    Ok(u.dot(v) / (u.length() * v.length()) > tolerance.cos())
 }
 
 /// The loop of one slice sampled at `points` exact points per piece.
 pub struct Traced {
     pub pieces: Vec<Vec<Vec3>>,
     pub q: Vec3,
+    pub closed: bool,
 }
 
 pub fn sample<G: Generating>(gear: &G, slice: &Slice, corners: &Corners, kept: &[u32], points: usize) -> Result<Traced, Refusal> {
-    let cuts = &corners.cuts;
-    debug_assert_eq!(cuts.len(), kept.len() + 1);
+    let mut ranges: Vec<(f64, f64)> = corners.cuts.windows(2).map(|w| (w[0], w[1])).collect();
+    debug_assert_eq!(ranges.len(), kept.len());
+    if slice.closed {
+        // The seam lies inside one piece: its two ends make one range across it.
+        let last = ranges.pop().expect("pieces");
+        ranges[0] = (last.0 - TAU, ranges[0].1);
+    }
     let mut pieces = Vec::new();
-    for k in 0..kept.len() {
-        let (a, b) = (cuts[k], cuts[k + 1]);
+    for &(a, b) in &ranges {
         let mut piece = Vec::with_capacity(points);
         for j in 0..points {
             let beta = a + (b - a) * j as f64 / (points - 1) as f64;
@@ -207,7 +279,12 @@ pub fn sample<G: Generating>(gear: &G, slice: &Slice, corners: &Corners, kept: &
         let shared = pieces[k - 1][points - 1];
         pieces[k][0] = shared;
     }
-    Ok(Traced { pieces, q: p(slice.q[0], slice.q[1], slice.z) })
+    if slice.closed {
+        let n = pieces.len();
+        let shared = pieces[n - 1][points - 1];
+        pieces[0][0] = shared;
+    }
+    Ok(Traced { pieces, q: (slice.place)(slice.q), closed: slice.closed })
 }
 
 fn fit(points: &[Vec3]) -> Result<NurbsCurve, Refusal> {
@@ -223,22 +300,25 @@ pub fn cutter(slices: &[Traced]) -> Result<BrepSolid, Refusal> {
     for s in slices {
         let first = s.pieces[0][0];
         let last = *s.pieces.last().unwrap().last().unwrap();
-        let mut curves = vec![make_line(s.q, first)?];
+        let mut curves = if s.closed { Vec::new() } else { vec![make_line(s.q, first)?] };
         for piece in &s.pieces {
             curves.push(fit(piece)?);
         }
-        curves.push(make_line(last, s.q)?);
+        if !s.closed {
+            curves.push(make_line(last, s.q)?);
+        }
         sections.push(curves);
     }
     Ok(loft_profile_brep(&sections)?)
 }
 
 /// Trace the space in every slice and loft it.
-pub fn space<G: Generating + Sync>(gear: &G, slices: &[Slice], samples: usize, points: usize) -> Result<BrepSolid, Refusal> {
+pub fn space<G: Generating + Sync>(gear: &G, slices: &[Slice], samples: usize, points: usize, strip: f64) -> Result<BrepSolid, Refusal> {
     // The slices are independent: traced on as many threads as there are cores.
     let all: Vec<Corners> = each(slices, |slice| corners(gear, slice, samples))?;
-    let kept = common(&all)?;
-    let pairs: Vec<(&Slice, &Corners)> = slices.iter().zip(&all).collect();
+    let joined = common(&all, strip)?;
+    let kept = joined[0].labels.clone();
+    let pairs: Vec<(&Slice, &Corners)> = slices.iter().zip(&joined).collect();
     let traced: Vec<Traced> = each(&pairs, |(slice, c)| sample(gear, slice, c, &kept, points))?;
     cutter(&traced)
 }
@@ -259,4 +339,41 @@ fn each<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> Result<R, Refusal> + Sy
         }
     });
     out.into_iter().map(|r| r.expect("every item is done")).collect()
+}
+
+/// The runs of the space along the curve `point(c)` for c in [`lo`, `hi`], from `n` samples, each
+/// end found by bisection: where a gap lies across a tooth's top, to place a slice's rays.
+pub fn runs<G: Generating>(gear: &G, point: impl Fn(f64) -> Vec3, lo: f64, hi: f64, n: usize) -> Vec<(f64, f64)> {
+    let inside = |c: f64| best(gear, point(c)).0 >= 0.0;
+    let cs: Vec<f64> = (0..=n).map(|i| lo + (hi - lo) * i as f64 / n as f64).collect();
+    let flags: Vec<bool> = cs.iter().map(|&c| inside(c)).collect();
+    let edge = |a: f64, b: f64, from_inside: bool| {
+        let (mut a, mut b) = (a, b);
+        for _ in 0..50 {
+            let m = 0.5 * (a + b);
+            if inside(m) == from_inside {
+                a = m;
+            } else {
+                b = m;
+            }
+        }
+        0.5 * (a + b)
+    };
+    let mut out = Vec::new();
+    let mut start = if flags[0] { Some(lo) } else { None };
+    for i in 0..n {
+        match (flags[i], flags[i + 1]) {
+            (false, true) => start = Some(edge(cs[i], cs[i + 1], false)),
+            (true, false) => {
+                if let Some(s) = start.take() {
+                    out.push((s, edge(cs[i], cs[i + 1], true)));
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        out.push((s, hi));
+    }
+    out
 }

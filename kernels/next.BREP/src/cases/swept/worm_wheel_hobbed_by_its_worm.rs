@@ -15,7 +15,7 @@
 //! and leaves the worm as it was). One space is traced (`solids::gear`) in 13 slices z = −6.3 …
 //! 6.3, seen from the point 40 from the axis at 84°, near the space's middle, and lofted into a
 //! cutter; its 30 turned copies are cut from the blank.
-use crate::solids::gear::{space, Generating, Slice};
+use crate::solids::gear::{air, space, Generating, Slice};
 use crate::solids::p;
 use crate::solids::sweep::{moved, turn_z};
 use crate::Refusal;
@@ -75,9 +75,22 @@ pub fn build() -> Result<BrepSolid, Refusal> {
     // 13 slices from z = −6.3 to 6.3, just past the blank's faces: by z = ±6.5 the thread's
     // edge tracks have left the space's boundary and the pieces change.
     let slices: Vec<Slice> = (0..=12)
-        .map(|k| Slice { z: -6.3 + 1.05 * k as f64, q, toward, from, to, r_top, reach: 20.0 })
+        .map(|k| {
+            let z = -6.3 + 1.05 * k as f64;
+            Slice {
+                q,
+                toward,
+                from,
+                to,
+                reach: 20.0,
+                place: Box::new(move |c: [f64; 2]| p(c[0], c[1], z)),
+                bound: air(move |c: [f64; 2]| c[0].hypot(c[1]) > r_top),
+                invert: false,
+                closed: false,
+            }
+        })
         .collect();
-    let space = space(&Worm, &slices, 120, 25)?;
+    let space = space(&Worm, &slices, 120, 25, 0.01)?;
     let mut operands = vec![blank];
     for k in 0..30 {
         operands.push(moved(&space, turn_z(12f64.to_radians() * k as f64, p(0.0, 0.0, 0.0))?)?);
