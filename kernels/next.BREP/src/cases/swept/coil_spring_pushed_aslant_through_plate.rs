@@ -1,13 +1,20 @@
-//! A plate holed by a coil spring (itself a ball swept along a helix) pushed aslant through it.
-//!
-//! Refused: the kernel's sweep of a solid takes a solid of revolution or a prism; the spring is
-//! neither, and the hole is its shadow along the push, bounded by the coils' silhouettes, which
-//! would have to be computed outside the kernel.
+//! A plate with a hole punched through it by a coil spring pushed aslant wholly through it, through
+//! the kernel's sweep of a tube slid across a slab (`sweep_tube_slid_across`): the spring is the
+//! ball of radius 0.4 swept along the helix of radius 2 about the z axis from (2, 0, −12), turning
+//! right-handed and rising 1.5 a turn for three turns (its ends half balls); it slides by
+//! (3, 1, 18), wholly below the plate to wholly above it, and the plate (z from 0 to 4) loses
+//! everything the spring passes through.
+use crate::solids::p;
 use crate::Refusal;
-use brep_kernel::BrepSolid;
+use brep_kernel::{boolean_operation_nary, make_box_brep, sweep_tube_slid_across, BooleanOperation, BrepSolid};
+use std::f64::consts::TAU;
 
 pub fn build() -> Result<BrepSolid, Refusal> {
-    Err(Refusal::from(
-        "next.BREP's sweep of a solid (sweepSolidWithin) carries a solid of revolution along a screw or a turn, or a prism along a planar motion; the coil spring is neither, and the hole is its shadow along the push, bounded by the coils' silhouettes, which would have to be computed outside the kernel",
-    ))
+    let plate = make_box_brep(p(-15.0, -15.0, 0.0), 30.0, 30.0, 4.0)?;
+    let helix = |s: f64| {
+        let angle = 3.0 * TAU * s;
+        p(2.0 * angle.cos(), 2.0 * angle.sin(), -12.0 + 4.5 * s)
+    };
+    let hole = sweep_tube_slid_across(&helix, 0.4, p(3.0, 1.0, 18.0), p(0.0, 0.0, 0.0), p(0.0, 0.0, 1.0), [0.0, 4.0])?;
+    Ok(boolean_operation_nary(&[plate, hole], BooleanOperation::Subtract)?)
 }
