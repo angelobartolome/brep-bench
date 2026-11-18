@@ -3,7 +3,7 @@
 //! plunges at (60, 10) and runs anticlockwise round the outline of a cross (a bar 80 by 30 across a
 //! bar 30 by 70, every corner rounded to 6) at z = −3, −6 and −9, then rises. The solid is the plate
 //! less everything the mill passes through, each move swept by the kernel's sweep of a solid.
-use crate::solids::cnc::{cut, rounded_loop, Cutter, Program};
+use crate::solids::cnc::{cut_in_turn, rounded_loop, Cutter, Program};
 use crate::solids::p;
 use crate::Refusal;
 use brep_kernel::{make_box_brep, BrepSolid};
@@ -22,5 +22,5 @@ pub fn build() -> Result<BrepSolid, Refusal> {
         rounded_loop(&mut mill, &CROSS, 6.0, z)?;
     }
     mill.line(start)?;
-    cut(plate, vec![mill])
+    cut_in_turn(plate, 0.0, vec![mill])
 }
