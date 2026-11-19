@@ -377,3 +377,80 @@ pub fn runs<G: Generating>(gear: &G, point: impl Fn(f64) -> Vec3, lo: f64, hi: f
     }
     out
 }
+
+/// `count` copies of `cell` turned about the z axis by `step` each, joined into one solid where
+/// they meet, without a boolean: the faces of `cell` on the surfaces dividing it from its
+/// neighbours (every point `divider` holds: its edges' ends and points within them) are left out
+/// of every copy, the rest put in one shell and sewn (the kernel's `sew_solid`) along the edges
+/// each copy shares with the next. A cell is its neighbour turned, so the faces left out on either
+/// side of a divider are the same face, and its edges are each other's.
+pub fn pattern_sewn(cell: &BrepSolid, step: f64, count: usize, divider: &dyn Fn(Vec3) -> bool) -> Result<BrepSolid, Refusal> {
+    use crate::solids::sweep::{moved, turn_z};
+    use std::collections::HashSet;
+    let [shell] = cell.shells.as_slice() else {
+        return Err(Refusal::from("pattern_sewn: the cell is not one shell"));
+    };
+    let point = |id: u64| cell.vertices.iter().find(|v| v.id == id).map(|v| v.point);
+    let edge = |id: u64| cell.edges.iter().find(|e| e.id == id);
+    let on_divider = |face: &brep_kernel::FaceRecord| {
+        let mut points = Vec::new();
+        for e in face.loops.iter().flat_map(|l| &l.coedges).filter_map(|c| edge(c.edge_id)) {
+            points.extend([point(e.start_vertex_id), point(e.end_vertex_id)].into_iter().flatten());
+            for k in 1..4 {
+                points.extend(e.curve.evaluate(e.t0 + (e.t1 - e.t0) * k as f64 / 4.0).ok());
+            }
+        }
+        !points.is_empty() && points.iter().all(|&q| divider(q))
+    };
+    let dropped: HashSet<u64> = shell.faces.iter().filter(|f| on_divider(f)).map(|f| f.id).collect();
+    if dropped.is_empty() {
+        return Err(Refusal::from("pattern_sewn: no face of the cell lies on its dividers"));
+    }
+    let mut soup = cell.clone();
+    soup.shells[0].faces.clear();
+    soup.vertices.clear();
+    soup.edges.clear();
+    // Ids made distinct per copy (a copy's ids are the cell's).
+    let span = 1 + cell.vertices.iter().map(|v| v.id).chain(cell.edges.iter().map(|e| e.id)).chain(
+        shell.faces.iter().flat_map(|f| std::iter::once(f.id).chain(f.loops.iter().flat_map(|l| std::iter::once(l.id).chain(l.coedges.iter().map(|c| c.id))))),
+    ).max().unwrap_or(0);
+    for k in 0..count as u64 {
+        let copy = moved(cell, turn_z(step * k as f64, Vec3::new(0.0, 0.0, 0.0))?)?;
+        let offset = (k + 1) * span;
+        let mut used_edges = HashSet::new();
+        for face in copy.shells[0].faces.iter().filter(|f| !dropped.contains(&f.id)) {
+            let mut f = face.clone();
+            f.id += offset;
+            for l in &mut f.loops {
+                l.id += offset;
+                for c in &mut l.coedges {
+                    used_edges.insert(c.edge_id);
+                    c.id += offset;
+                    c.edge_id += offset;
+                }
+            }
+            soup.shells[0].faces.push(f);
+        }
+        let mut used_vertices = HashSet::new();
+        for e in copy.edges.iter().filter(|e| used_edges.contains(&e.id)) {
+            let mut e = e.clone();
+            used_vertices.extend([e.start_vertex_id, e.end_vertex_id]);
+            e.id += offset;
+            e.start_vertex_id += offset;
+            e.end_vertex_id += offset;
+            soup.edges.push(e);
+        }
+        for v in copy.vertices.iter().filter(|v| used_vertices.contains(&v.id)) {
+            let mut v = v.clone();
+            v.id += offset;
+            soup.vertices.push(v);
+        }
+    }
+    let (sewn, report) = brep_kernel::sew_solid(&soup, 1e-7)?;
+    // (A one-use edge left open is a pole's collapsed edge where the cells meet on the axis, which
+    // the validator admits; anything else it reports.)
+    if let Some(issue) = report.issues.first() {
+        return Err(Refusal::from(format!("pattern_sewn: the copies do not sew into one valid solid: {issue}")));
+    }
+    Ok(sewn)
+}

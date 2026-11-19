@@ -14,12 +14,16 @@
 //! The 30 tooth spaces are one space turned by 12° steps (a worm turn moves the wheel by 12°
 //! and leaves the worm as it was). One space is traced (`solids::gear`) in 13 slices z = −6.3 …
 //! 6.3, seen from the point 40 from the axis at 84°, near the space's middle, and lofted into a
-//! cutter; its 30 turned copies are cut from the blank.
-use crate::solids::gear::{air, space, Generating, Slice};
-use crate::solids::p;
+//! cutter. The wheel is 30 equal cells: one, the blank's 12° wedge between the half planes at 78°
+//! and 90° (tooth middles, either side of the traced space) less the space and its two neighbours
+//! (so it is the wheel's part there, wherever a space reaches), turned 30 times and sewn where the
+//! cells meet (`solids::gear::pattern_sewn`), with no boolean between them; where that does not sew,
+//! the 30 turned spaces cut from the blank at once.
+use crate::solids::gear::{air, pattern_sewn, space, Generating, Slice};
+use crate::solids::{p, polygon};
 use crate::solids::sweep::{moved, turn_z};
 use crate::Refusal;
-use brep_kernel::{boolean_operation_nary, make_cylinder_brep, BooleanOperation, BrepSolid, Vec3};
+use brep_kernel::{boolean_operation_nary, make_cylinder_brep, revolve_profile_brep, BooleanOperation, BrepSolid, Vec3};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 struct Worm;
@@ -91,9 +95,22 @@ pub fn build() -> Result<BrepSolid, Refusal> {
         })
         .collect();
     let space = space(&Worm, &slices, 120, 25, 0.01)?;
+    let step = 12f64.to_radians();
+    let turned = |k: i32| -> Result<BrepSolid, String> { moved(&space, turn_z(step * k as f64, p(0.0, 0.0, 0.0))?) };
+    let (low, high) = (78f64.to_radians(), 90f64.to_radians());
+    let wedge = {
+        let corners = [p(0.0, 0.0, -6.0), p(32.0, 0.0, -6.0), p(32.0, 0.0, 6.0), p(0.0, 0.0, 6.0)];
+        let w = revolve_profile_brep(&polygon(&corners)?, p(0.0, 0.0, 0.0), p(0.0, 0.0, 1.0), high - low)?;
+        moved(&w, turn_z(low, p(0.0, 0.0, 0.0))?)?
+    };
+    let cell = boolean_operation_nary(&[wedge, turned(-1)?, turned(0)?, turned(1)?], BooleanOperation::Subtract)?;
+    let on_half_plane = |q: Vec3, a: f64| (q.x * a.sin() - q.y * a.cos()).abs() < 1e-7 && q.x * a.cos() + q.y * a.sin() > -1e-7;
+    if let Ok(wheel) = pattern_sewn(&cell, step, 30, &|q| on_half_plane(q, low) || on_half_plane(q, high)) {
+        return Ok(wheel);
+    }
     let mut operands = vec![blank];
     for k in 0..30 {
-        operands.push(moved(&space, turn_z(12f64.to_radians() * k as f64, p(0.0, 0.0, 0.0))?)?);
+        operands.push(turned(k)?);
     }
     Ok(boolean_operation_nary(&operands, BooleanOperation::Subtract)?)
 }
