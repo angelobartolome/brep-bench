@@ -16,6 +16,18 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 pub struct Cutter(pub Vec<Piece>);
 
 impl Cutter {
+    /// The radius of a flat end mill (`Cutter::flat`), None for any other cutter.
+    fn flat_radius(&self) -> Option<f64> {
+        match self.0.as_slice() {
+            [Piece::Line { from: a, to: b }, Piece::Line { from: c, to: d }, ..]
+                if a == &[0.0, 0.0] && b[1] == 0.0 && b[0] > 0.0 && c == b && d[0] == b[0] && d[1] > 0.0 =>
+            {
+                Some(b[0])
+            }
+            _ => None,
+        }
+    }
+
     /// A flat end mill of `radius`, `length` up from its tip, the middle of its flat end.
     pub fn flat(radius: f64, length: f64) -> Cutter {
         Cutter(vec![
@@ -291,6 +303,12 @@ pub fn cut_in_turn(block: BrepSolid, top: f64, programs: Vec<Program>) -> Result
             }
         };
         let keep: Vec<bool> = (0..paths.len()).map(|i| !covered(i)).collect();
+        if let Some(radius) = program.cutter.flat_radius() {
+            if let Some(cut) = by_regions(&body, top, paths, &keep, radius, reach) {
+                body = cut;
+                continue;
+            }
+        }
         for (solid, keep) in program.swept.into_iter().zip(keep) {
             if keep {
                 body = boolean_operation_nary(&[body, solid], BooleanOperation::Subtract)?;
@@ -314,3 +332,36 @@ pub fn cut(block: BrepSolid, programs: Vec<Program>) -> Result<BrepSolid, Refusa
     result
 }
 
+
+/// `body` less what a flat end mill's kept moves remove, made as the kernel's mill regions: the
+/// moves at each depth (level lines and arcs, slides along the axis as the cutter standing at their
+/// lower end) in one region, extruded from that depth past the top, all cut at once. None where a
+/// move is neither (aslant), the cutter does not reach the top from a depth, or the kernel refuses:
+/// the caller then cuts the moves one at a time.
+fn by_regions(body: &BrepSolid, top: f64, paths: &[Path], keep: &[bool], radius: f64, reach: f64) -> Option<BrepSolid> {
+    use brep_kernel::{flat_mill_region_prisms, MillMove};
+    let mut depths: Vec<(f64, Vec<MillMove>)> = Vec::new();
+    for (path, _) in paths.iter().zip(keep).filter(|(_, &k)| k) {
+        let (z, m) = match *path {
+            Path::Level { from, to, about: None, z } => (z, MillMove::Line { from, to }),
+            Path::Level { from, about: Some((centre, sweep)), z, .. } => {
+                let (dx, dy) = (from[0] - centre[0], from[1] - centre[1]);
+                (z, MillMove::Arc { centre, radius: dx.hypot(dy), start: dy.atan2(dx), sweep })
+            }
+            Path::Axial { at, low } => (low, MillMove::Line { from: at, to: at }),
+            Path::Other => return None,
+        };
+        if z + reach < top + 1e-9 {
+            return None;
+        }
+        match depths.iter_mut().find(|(d, _)| (*d - z).abs() <= 1e-12) {
+            Some((_, moves)) => moves.push(m),
+            None => depths.push((z, vec![m])),
+        }
+    }
+    let mut operands = vec![body.clone()];
+    for (z, moves) in &depths {
+        operands.extend(flat_mill_region_prisms(moves, radius, *z, top + 1.0).ok()?);
+    }
+    boolean_operation_nary(&operands, BooleanOperation::Subtract).ok()
+}
