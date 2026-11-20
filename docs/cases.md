@@ -43,6 +43,17 @@ the concave edge where a ball sits on a post, and the rim of the lens two balls 
 Each distance is a chord, a straight line from the edge in the plane square to it, so on a ball it
 is not the arc along the face, and the bevel is the cone between the two circles the chords reach.
 
+Blends with no analytic surface to fall back on. Variable rounds whose radius runs linearly along
+the edge: down to nothing at a cube's corner (a cone with its apex on the vertex), along an inside
+edge, along an obtuse edge of a hexagonal prism, and round a half cylinder's curved rim. Variable
+chamfers: one distance growing along a cube's edge, a hyperbolic paraboloid, and a distance growing
+round a curved rim, ruled between a spiral of Archimedes and a helix. Rounds and chamfers along
+edges that are no circle: an elliptic cylinder's rim, the rim of an elliptic hole and the root of
+an elliptic boss, and the rim of a periodic B-spline bean with a dent, where the round turns from
+convex to saddle. Each is a pipe or a surface of constant slope about the edge's parallel curve, and
+each has its closed form from the edge's length alone. And sections that are no circle on a curved
+edge: a cylinder's rim blended by a parabola and rounded by a quarter ellipse.
+
 ## Solid sweeps (`swept/`)
 
 Everything a tool passes through as it moves, from a ball swung through a block (a closed form) to
