@@ -5,18 +5,36 @@ unit mm
 use std
 use std.solids
 
-// the point of the hyperbola `u` up from its waist on the line through `o`
-component Hyperbola(o: point, u: Length) {
-  p := point(x: o.x + 4mm * sqrt(1 + (u / 6mm)^2), y: o.y + u)
+// A hyperbola as its foci make it: every point `2a` farther from `far` than from `near`. `q` goes
+// round the circle of radius `2a` about `far`, at bearing `u` from the line of the foci, and `p`
+// is the point of the ray through it as far from `q` as from `near`.
+component Hyperbola(near: point, far: point, a: Length, u: Angle) {
+  q := point
+  p := point
+  foci := line(far, near)
+  ray := line(far, q)
+  far distance(2 * a) q
+  foci angle(u) ray
+  p coincident ray
+  line(p, q) equal line(p, near)
 }
 
 in std.front {
   o := point
   fix((0, 0)) o
+  // the box of the asymptotes, the waist 4 out and 6 up: a focus is as far out as its corner
+  corner := point
+  fix((4, 6)) corner
+  near := point hint((7.2, 0))
+  far := point hint((-7.2, 0))
+  horizontal (span := line(far, near))
+  o midpoint span
+  line(o, near) equal line(o, corner)
+
   low := point hint((5.66, -6))
   high := point hint((5.66, 6))
-  low coincident k hint(t: -6)
-  high coincident k hint(t: 6)
+  low coincident k hint(t: -25)
+  high coincident k hint(t: 25)
   fix(y == -6mm) low
   fix(y == 6mm) high
   foot := point hint((0, -6))
@@ -27,6 +45,6 @@ in std.front {
   horizontal (bottom := line(foot, low))
   fix(x == 0mm) foot
 }
-k := trace(Hyperbola(o).p over u in (-6mm, 6mm))
+k := trace(Hyperbola(near, far, a: 4mm).p over u in (-30deg, 30deg))
 
 part := solid(std.solids.Revolution(face(k from low to high, top, spindle, bottom), about: std.z))
