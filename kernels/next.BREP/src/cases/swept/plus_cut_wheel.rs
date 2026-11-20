@@ -4,7 +4,9 @@
 //! z = −10 to 0, moved, as seen from the wheel, by its own turn t about the z axis and then the
 //! wheel's turn taken back (+2t/3 about the vertical line through (−50, 0)), for t from 0° to
 //! 540°. Asked for within 40.5 of the wheel's axis from z = −8.5 to −1.5, which holds the wheel;
-//! cut from the wheel.
+//! cut from the wheel. The cut is made in the plane (`cut_planar_sweep_from_prism`): the wheel's
+//! disc less the plus's exact swept region, extruded once over the wheel's height; where the kernel
+//! does not draw it so, the sweep's bodies are subtracted from the wheel's cylinder.
 use crate::solids::p;
 use crate::Refusal;
 use brep_kernel::{
@@ -47,6 +49,19 @@ pub fn build() -> Result<BrepSolid, Refusal> {
         axial: [-8.5, -1.5],
         angle: None,
     };
+    let blank = SweptTool::Prism {
+        origin: p(-50.0, 0.0, -8.0),
+        normal: z,
+        x_axis: p(1.0, 0.0, 0.0),
+        outline: vec![OutlinePiece::Arc { centre: [0.0, 0.0], radius: 40.0, start: 0.0, end: 2.0 * PI }],
+        from: 0.0,
+        to: 6.0,
+    };
+    if let Some(mut cut) = brep_kernel::cut_planar_sweep_from_prism(&blank, &plus, &in_mesh, &around_wheel)? {
+        if cut.len() == 1 {
+            return Ok(cut.remove(0));
+        }
+    }
     let mut operands = vec![wheel];
     operands.extend(sweep_solid_within(&plus, &in_mesh, &around_wheel)?);
     Ok(boolean_operation_nary(&operands, BooleanOperation::Subtract)?)
