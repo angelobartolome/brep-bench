@@ -3,7 +3,8 @@
 //! Through the kernel's sweep of a solid (`sweep_solid_within`), asked for the bar as a prism (its
 //! rectangle 4.5 ≤ x ≤ 12, |y| ≤ 8 from z = −0.45 to 0.45) along the screw about the z axis that
 //! rises 1 a turn, from −180° to +7380°, within 5.2 of the z axis from z = −0.02 to 20.02 (which
-//! holds the rod and which neither end position reaches); cut from the rod. The kernel's sweep
+//! holds the rod and which neither end position reaches); cut from the rod. Where the kernel builds the
+//! rod less the sweep directly (`sweep_clip_less`, the rod as clip), that body instead. The kernel's sweep
 //! carries a solid of revolution along a screw and a prism only along a planar motion, so it may
 //! refuse.
 use crate::solids::p;
@@ -11,7 +12,7 @@ use crate::Refusal;
 #[allow(unused_imports)]
 use brep_kernel::{
     boolean_operation_nary, make_box_brep, make_cylinder_brep, revolve_profile_brep,
-    sweep_solid_within, BooleanOperation, BrepSolid, OutlinePiece, ScrewStep, SolidMotion,
+    sweep_clip_less, sweep_solid_within, BooleanOperation, BrepSolid, OutlinePiece, ScrewStep, SolidMotion,
     SweepClip, SweptTool, Vec3,
 };
 #[allow(unused_imports)]
@@ -48,6 +49,13 @@ pub fn build() -> Result<BrepSolid, Refusal> {
         axial: [-0.02, 20.02],
         angle: None,
     };
+    // The rod less the sweep directly where the kernel builds it (the rod as clip); else subtract.
+    let rod_clip = SweepClip { radius: [0.0, 5.0], axial: [0.0, 20.0], ..clip0.clone() };
+    if let Some(mut bodies) = sweep_clip_less(&tool0, &motion0, &rod_clip)? {
+        if bodies.len() == 1 {
+            return Ok(bodies.remove(0));
+        }
+    }
     operands.extend(sweep_solid_within(&tool0, &motion0, &clip0)?);
     Ok(boolean_operation_nary(&operands, BooleanOperation::Subtract)?)
 }
