@@ -8,9 +8,10 @@
 //! line ρ + z = 19/2, lowered by φ/π. Turning by φ and lowering by φ/π is the screw about the z axis
 //! that falls 2 a turn, so the corner beyond the chamfer is a triangle beyond that line, reaching
 //! past the cylinder's side and top, screwed from −100° to 100° by the kernel's helical sweep
-//! (`sweep_helix`) and cut from the half cylinder. Its walls are a helicoid on the line, which
-//! meets the top along the spiral ρ = 5 − d and the side along the helix z = 6 − d, and the
-//! screw sweeps of the triangle's other sides, which stay outside the half cylinder.
+//! (`sweep_helix`) and cut from the half cylinder. Its wall on the line is the kernel's helical
+//! sweep of it, which holds the helicoid to a ten-thousandth of the pitch; the helicoid meets the
+//! top along the spiral ρ = 5 − d and the side along the helix z = 6 − d. The sweeps of the
+//! triangle's other sides stay outside the half cylinder.
 use crate::solids::*;
 use solidcore_record::Seg2;
 use std::f64::consts::FRAC_PI_2;
