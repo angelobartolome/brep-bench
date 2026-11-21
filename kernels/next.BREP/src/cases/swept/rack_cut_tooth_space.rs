@@ -5,6 +5,9 @@
 //! z per radian) and then the blank's turn taken back (θ about the y axis, from +x toward +z), so
 //! the pitch line rolls without slipping on the pitch circle, for θ from −60° to 60°. Asked for
 //! within 22.5 of the blank's axis from y = −1 to 7, which holds the blank; cut from the blank.
+//! The cut is made in the plane (`cut_planar_sweep_from_prism`): the blank's disc less the tooth's
+//! exact swept region, extruded once over the blank's height; where the kernel does not draw it so,
+//! the sweep's bodies are subtracted from the blank's cylinder.
 use crate::solids::p;
 use crate::Refusal;
 use brep_kernel::{
@@ -45,6 +48,19 @@ pub fn build() -> Result<BrepSolid, Refusal> {
         axial: [-1.0, 7.0],
         angle: None,
     };
+    let disc = SweptTool::Prism {
+        origin: p(0.0, 0.0, 0.0),
+        normal: y,
+        x_axis: p(1.0, 0.0, 0.0),
+        outline: vec![OutlinePiece::Arc { centre: [0.0, 0.0], radius: 22.0, start: 0.0, end: 2.0 * PI }],
+        from: 0.0,
+        to: 6.0,
+    };
+    if let Some(mut cut) = brep_kernel::cut_planar_sweep_from_prism(&disc, &tooth, &rolling, &around_blank)? {
+        if cut.len() == 1 {
+            return Ok(cut.remove(0));
+        }
+    }
     let mut operands = vec![blank];
     operands.extend(sweep_solid_within(&tooth, &rolling, &around_blank)?);
     Ok(boolean_operation_nary(&operands, BooleanOperation::Subtract)?)

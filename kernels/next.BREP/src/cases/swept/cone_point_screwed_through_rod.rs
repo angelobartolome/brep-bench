@@ -9,7 +9,7 @@
 use crate::solids::p;
 use crate::Refusal;
 use brep_kernel::{
-    boolean_operation_nary, make_cylinder_brep, sweep_solid_within, BooleanOperation, BrepSolid,
+    boolean_operation_nary, make_cylinder_brep, sweep_clip_less, sweep_solid_within, BooleanOperation, BrepSolid,
     OutlinePiece, ScrewStep, SolidMotion, SweepClip, SweptTool,
 };
 #[allow(unused_imports)]
@@ -45,6 +45,14 @@ pub fn build() -> Result<BrepSolid, Refusal> {
         angle: None,
     };
     let mut operands = vec![rod];
+    // The rod less the sweep, built directly where the kernel can (its clip
+    // the rod itself); else the sweep within the larger clip, subtracted.
+    let rod_clip = SweepClip { radius: [0.0, 5.0], axial: [0.0, 20.0], ..around_rod.clone() };
+    if let Some(mut bodies) = sweep_clip_less(&tool, &screw, &rod_clip)? {
+        if bodies.len() == 1 {
+            return Ok(bodies.remove(0));
+        }
+    }
     operands.extend(sweep_solid_within(&tool, &screw, &around_rod)?);
     Ok(boolean_operation_nary(&operands, BooleanOperation::Subtract)?)
 }
