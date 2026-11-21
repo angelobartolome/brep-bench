@@ -4,22 +4,26 @@
 //! to z = −2. As the tool turns by t about the z axis the wheel turns by −2t/3 about its own axis,
 //! for t from 0° to 540°; cut from the wheel everything the tool passes through, seen from it.
 //!
-//! Refused. Seen from the wheel, the tool turns about its own axis while that axis is carried
-//! round the wheel's: two turns at once, in the ratio 5 : 2. kentron's sweeps slide
-//! (`sweep::extrude`), turn about one axis (`sweep::revolve`) or carry a profile along a spine in
-//! a frame that follows the spine (`sweep::pipe`, `pipe_with`), and none takes a solid; along the
-//! circle the tool's centre runs on, the tool turns 5/2 as fast as that circle's own frame, which
-//! none of them does. Swept face by face, each flat side of the plus would first have to be split
-//! where the motion runs along it, a line that moves across it: the wheel's walls are the
-//! envelope of the plus, which kentron has no operation to find.
-use crate::Refusal;
+//! kentron's cut by a motion (`sweep::cut_by_motion`) takes the plus as a prism and the motion
+//! as the wheel sees it: the plus's own turn by t about the z axis, then the wheel's taken back,
+//! a turn by 2t/3 about its axis. Both turns are square to the wheel, and the plus runs through
+//! all of its height, so the cut is planar: the wheel's disc less the region the plus's outline
+//! sweeps (bounded by its convex corners' paths and its sides' envelopes, each kept where no pose
+//! of the plus covers it), extruded through the wheel.
+use crate::bench::p;
+use kentron::math::{Axis, Direction, Frame, Point2};
+use kentron::sweep::{self, Blank, Motion, MotionStep, Tool};
 use kentron::topology::{Model, Shape};
+use std::f64::consts::PI;
 
-pub fn build(_m: &mut Model) -> Result<Shape, Refusal> {
-    Err(Refusal::from(
-        "kentron has no sweep of a solid along a pair of turns: it slides, turns about one axis, or \
-         follows a spine in the spine's frame, and the plus seen from the wheel turns 5/2 as fast as \
-         the circle its centre runs on; the wheel's walls are the envelope of the plus, which kentron \
-         has no operation to find",
-    ))
+pub fn build(m: &mut Model) -> kentron::Result<Shape> {
+    let wheel = Blank::Disc { frame: Frame::new(p(-50.0, 0.0, -8.0), Direction::Z, Direction::X), radius: 40.0, height: 6.0 };
+    let (a, w) = (30.0, 4.0);
+    let corners = [[a, -w], [a, w], [w, w], [w, a], [-w, a], [-w, w], [-a, w], [-a, -w], [-w, -w], [-w, -a], [w, -a], [w, -w]];
+    let plus = Tool::Prism { frame: Frame::WORLD, outline: corners.iter().map(|&[x, y]| Point2::new(x, y)).collect(), from: -10.0, to: 0.0 };
+    // The plus's turn about the z axis, then the wheel's (−2t/3 about its axis) taken back.
+    let tool_turn = MotionStep { axis: Axis::new(p(0.0, 0.0, 0.0), Direction::Z), turn: 1.0, advance: 0.0 };
+    let wheel_turn_back = MotionStep { axis: Axis::new(p(-50.0, 0.0, 0.0), Direction::Z), turn: 2.0 / 3.0, advance: 0.0 };
+    let motion = Motion { steps: vec![tool_turn, wheel_turn_back], from: 0.0, to: 3.0 * PI };
+    sweep::cut_by_motion(m, &wheel, &plus, &motion)
 }

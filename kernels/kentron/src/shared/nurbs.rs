@@ -1,12 +1,16 @@
 //! What the nurbs implementations share: the blocks under a spline top, made by sweeping the top
 //! face straight down past the floor (its sides the upright planes through the patch's edges)
-//! and cutting that column off at the floor with a box wider than the block.
+//! and cutting that column off at the floor with a box wider than the block; and a ball bounded by
+//! a NURBS sphere.
 use crate::bench::{p, v};
 use kentron::boolean;
 use kentron::geometry::surface::{BSplineSurface, BezierSurface, KnotVector, Surface};
 use kentron::make;
 use kentron::primitives::Cuboid;
 use kentron::sweep;
+use crate::shared::geometry::{circle_nurbs_periodic, solid_of};
+use crate::Refusal;
+use kentron::math::Point;
 use kentron::topology::{Model, Shape};
 
 /// The block over the floor z = 0 under the face of the whole of `top`, a graph of a height over
@@ -42,4 +46,31 @@ pub fn barrel_vault(m: &mut Model) -> kentron::Result<Shape> {
     let along_y = KnotVector::new(vec![0.0, 1.0], vec![3, 3], 2);
     let top = BSplineSurface::try_new(poles, along_x, along_y)?.with_weights(weights);
     block_under(m, Surface::BSpline(top), -12.0, 12.0)
+}
+
+/// The ball of `radius` about `center` bounded by the standard biquadratic NURBS sphere of
+/// `geometry/nurbs-sphere` moved there: the unit circle round the axis (nine weighted poles on the
+/// knots 0, ¼, ½, ¾, 1) times the semicircle (ρ, z) = (0, −r), (r, −r), (r, 0), (r, r), (0, r)
+/// on the knots 0, ½, 1, each pole's weight the product, its poles r above and below the center
+/// and its seam the meridian on the +x side. As there, the circle is taken in its periodic form,
+/// the same curve, since kentron seams a face only on a periodic surface.
+pub fn nurbs_ball(m: &mut Model, center: Point, radius: f64) -> Result<Shape, Refusal> {
+    let (circle, w, knots, mults) = circle_nurbs_periodic();
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    let r = radius;
+    let meridian = [(0.0, -r), (r, -r), (r, 0.0), (r, r), (0.0, r)];
+    let meridian_w = [1.0, h, 1.0, h, 1.0];
+    let poles = circle
+        .iter()
+        .map(|&(cx, cy)| meridian.iter().map(|&(rho, z)| center + v(rho * cx, rho * cy, z)).collect())
+        .collect();
+    let weights = w.iter().map(|&wi| meridian_w.iter().map(|&wj| wi * wj).collect()).collect();
+    let net = BSplineSurface::try_new(
+        poles,
+        KnotVector::periodic(knots, mults, 2),
+        KnotVector::new(vec![0.0, 0.5, 1.0], vec![3, 2, 3], 2),
+    )?
+    .with_weights(weights);
+    let face = make::face_on_surface(m, Surface::BSpline(net))?;
+    solid_of(m, &[face])
 }

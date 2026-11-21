@@ -3,19 +3,25 @@
 //! at (5, 0, 0) with radii 2.5 and 2, its axis (0, sin 25°, cos 25°), turned rigidly about the z
 //! axis from −140° to +140°. Everything the cutter passes through, cut.
 //!
-//! Refused. kentron turns a shape about an axis (`sweep::revolve`), but no solid. It turns the
-//! cutter's face whole, and a face turned whole is what it passes through only if the turn never
-//! runs along it inside it. On this torus the turn runs along it on its characteristic curve,
-//! which is none of its circles, since its axis is skew to the turn's. Splitting the face along
-//! that curve first would be computing the envelope that walls the groove outside the kernel, and
-//! kentron has no operation to find it.
-use crate::Refusal;
+//! kentron's cut by a motion (`sweep::cut_by_motion`) takes the cutter as the solid of revolution
+//! of its tube's circle and the turn as one step. The cutter starts and ends clear of the block,
+//! so over the block what it fills is turned into itself: the groove's section in the meridian
+//! half-plane (distance from the z axis, height) is the region the cutter's characteristic curve
+//! (where the turn runs along it, none of its circles, its axis being skew to the turn's)
+//! projects to along the circles about the z axis. The block's meridian rectangle less that is
+//! revolved through the block's 60°.
+use crate::bench::p;
+use kentron::math::{Axis, Direction, Frame, Point2};
+use kentron::sweep::{self, Blank, MeridianPiece, Motion, MotionStep, Tool};
 use kentron::topology::{Model, Shape};
+use std::f64::consts::{PI, TAU};
 
-pub fn build(_m: &mut Model) -> Result<Shape, Refusal> {
-    Err(Refusal::from(
-        "kentron has no sweep of a solid about an axis: sweep::revolve takes no solid and turns the \
-         torus's face whole, and the groove's wall is the envelope of the turned torus, along a \
-         characteristic curve that is none of its circles, which kentron has no operation to find",
-    ))
+pub fn build(m: &mut Model) -> kentron::Result<Shape> {
+    let block = Blank::RingSector { frame: Frame::WORLD, radii: [8.0, 12.0], heights: [-1.0, 1.0], angles: [0.0, PI / 3.0] };
+    let lean = 25f64.to_radians();
+    let frame = Frame::new(p(5.0, 0.0, 0.0), Direction::new(0.0, lean.sin(), lean.cos()), Direction::X);
+    let cutter = Tool::Revolved { frame, meridian: vec![MeridianPiece::Arc { centre: Point2::new(2.5, 0.0), radius: 2.0, start: 0.0, end: TAU }] };
+    let turn = MotionStep { axis: Axis::new(p(0.0, 0.0, 0.0), Direction::Z), turn: 1.0, advance: 0.0 };
+    let motion = Motion { steps: vec![turn], from: (-140f64).to_radians(), to: 140f64.to_radians() };
+    sweep::cut_by_motion(m, &block, &cutter, &motion)
 }

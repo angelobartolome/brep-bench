@@ -4,21 +4,26 @@
 //! axis, right-handed, rising 30 a turn, from a turn of −108° to +348°. Everything the wheel
 //! passes through, cut.
 //!
-//! Refused. kentron's one sweep that can follow a screw is a pipe along a helix in its Frenet
-//! frame (`sweep::pipe_with`, `frenet`), and it takes no solid ("a pipe of a Solid"). Given the
-//! wheel's shell it sweeps each face whole, which is what that face passes through only if the
-//! motion never runs along it inside it; on a torus screwed about an axis it does not share, the
-//! motion runs along it on its characteristic curve, none of the torus's circles. The groove's
-//! wall is the envelope that curve sweeps out, which kentron has no operation to find, and
-//! computing it here would be making the geometry outside the kernel.
-use crate::Refusal;
+//! kentron's cut by a motion (`sweep::cut_by_motion`) takes the wheel as the solid of revolution
+//! of its tube's circle and the screw as one step. The wheel starts wholly below the rod and ends
+//! wholly above it, so within the rod what it fills is screwed into itself: the groove's section
+//! square to the axis is the plane region the wheel's characteristic curve (where the screw runs
+//! along it) projects to along the helices, the whole of the tube's circle on the rod's side
+//! among it (set along the helix there, the wheel's surface runs along the screw all round it).
+//! The rod's section less that is screwed up the rod.
+use crate::bench::p;
+use kentron::math::{Axis, Direction, Frame, Point2};
+use kentron::sweep::{self, Blank, MeridianPiece, Motion, MotionStep, Tool};
 use kentron::topology::{Model, Shape};
+use std::f64::consts::TAU;
 
-pub fn build(_m: &mut Model) -> Result<Shape, Refusal> {
-    Err(Refusal::from(
-        "kentron has no sweep of a solid along a screw motion: sweep::pipe along a helix takes no \
-         solid, and swept face by face the torus's face would first have to be split along its \
-         characteristic curve, none of its circles; the groove's wall is the envelope of the screwed \
-         torus, which kentron has no operation to find",
-    ))
+pub fn build(m: &mut Model) -> kentron::Result<Shape> {
+    let rod = Blank::Disc { frame: Frame::WORLD, radius: 5.0, height: 20.0 };
+    let h = (TAU * 5.5 / 30.0).atan();
+    let frame = Frame::new(p(11.5, 0.0, 0.0), Direction::new(0.0, h.cos(), -h.sin()), Direction::X);
+    let wheel = Tool::Revolved { frame, meridian: vec![MeridianPiece::Arc { centre: Point2::new(6.0, 0.0), radius: 2.0, start: 0.0, end: TAU }] };
+    // The screw, t its turn in radians: rising 30 a turn.
+    let screw = MotionStep { axis: Axis::new(p(0.0, 0.0, 0.0), Direction::Z), turn: 1.0, advance: 30.0 / TAU };
+    let motion = Motion { steps: vec![screw], from: (-108f64).to_radians(), to: 348f64.to_radians() };
+    sweep::cut_by_motion(m, &rod, &wheel, &motion)
 }

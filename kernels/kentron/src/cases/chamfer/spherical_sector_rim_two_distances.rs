@@ -1,0 +1,16 @@
+//! A spherical sector: the ball of radius 5 about the origin inside the cone with its apex there,
+//! about the z axis, opening upward with half angle α, cos α = 3/5 (about 53.13°). The rim where
+//! the cone meets the ball, chamfered with two distances, each in a straight line from the rim: 2
+//! down the cone and 1 on the ball.
+use crate::bench::p;
+use crate::shared::chamfer::{chamfer_rim, spherical_sector};
+use crate::Refusal;
+use kentron::blend::ChamferSize;
+use kentron::topology::{Model, Shape};
+
+pub fn build(m: &mut Model) -> Result<Shape, Refusal> {
+    let sector = spherical_sector(m, 3.0 / 5.0)?;
+    // (The rim, and a point halfway up the cone's side, away from the seams.)
+    let (rim, side) = (p(0.0, 4.0, 3.0), p(0.0, 2.0, 1.5));
+    chamfer_rim(m, sector, rim, side, ChamferSize::Distances(2.0, 1.0))
+}

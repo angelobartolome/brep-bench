@@ -1,6 +1,7 @@
 //! Helpers shared by one category's implementations, one module per category.
 pub mod boolean;
 pub mod chamfer;
+pub mod cnc;
 pub mod draft;
 pub mod edit;
 pub mod feature;
