@@ -42,6 +42,8 @@
 "swept/tetrahedron-screwed" = "no sweep of a solid"
 "shell/l-block-open-top" = "no shell joined by arcs"
 "chamfer/cube-all-edges" = "no chamfer corner cut flat"
+"chamfer/variable-distance-edge" = "no chamfer with a varying distance"
+"chamfer/variable-distance-semicircular-rim" = "no chamfer with a varying distance"
 "feature/hole-through-the-upper-arm" = "no hole through to the next face"
 "feature/pad-down-to-cylinder" = "no extrusion up to a face"
 "feature/post-up-to-dome" = "no extrusion up to a face"
