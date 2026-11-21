@@ -60,10 +60,7 @@ fn stl(b: &Brep, path: &str, volume: f64, area: f64) -> Result<(), String> {
     } else {
         size
     };
-    let opt = MeshOptions {
-        linear: (1e-4 * size).min(5e-3 * thickness),
-        angular: 0.1,
-    };
+    let opt = MeshOptions::new((1e-4 * size).min(5e-3 * thickness), 0.1);
     let m = tessellate(b, &opt).map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(84 + 50 * m.triangles.len());
     out.extend_from_slice(&[0u8; 80]);

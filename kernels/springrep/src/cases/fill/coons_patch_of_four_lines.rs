@@ -23,7 +23,7 @@ fn wall(y: f64, h0: f64, h1: f64) -> Result<Section, String> {
         &[p(0., 0.), p(10., 0.), p(10., h1), p(0., h0)],
         &["floor", "x10", "top", "x0"],
     );
-    Ok(Section { profile: outline, frame: plane })
+    Ok(Section::new(outline, plane))
 }
 
 pub fn build() -> Result<Brep, String> {

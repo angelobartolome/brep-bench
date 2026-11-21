@@ -11,13 +11,7 @@ use crate::shared::{e, frame};
 pub fn build() -> Result<Brep, String> {
     let rim = Profile::circle(Vec2::ZERO, 10.);
     // each circle starts at its frame's x axis: along x below, along y above
-    let below = Section {
-        profile: rim.clone(),
-        frame: frame([0., 0., -5.], [0., 0., 1.], [1., 0., 0.])?,
-    };
-    let above = Section {
-        profile: rim,
-        frame: frame([0., 0., 5.], [0., 0., 1.], [0., 1., 0.])?,
-    };
+    let below = Section::new(rim.clone(), frame([0., 0., -5.], [0., 0., 1.], [1., 0., 0.])?);
+    let above = Section::new(rim, frame([0., 0., 5.], [0., 0., 1.], [0., 1., 0.])?);
     loft(&[below, above], true, "twist").map_err(e)
 }
