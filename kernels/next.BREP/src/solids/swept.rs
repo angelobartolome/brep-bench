@@ -251,3 +251,43 @@ pub fn less_all(block: BrepSolid, swept: Vec<BrepSolid>) -> Result<BrepSolid, Re
     let operands: Vec<_> = std::iter::once(block).chain(swept).collect();
     Ok(boolean_operation_nary(&operands, BooleanOperation::Subtract)?)
 }
+
+/// The ring torus of the tumbling-torus cases (centre (3, 0, 2), axis along z, the circle through
+/// its tube's centres of radius 1) with tube radius `tube`, swept by the tumble: at roll t turned by
+/// `rate·t` about the vertical line through (2, 0, 0), then by `sign·t` about the line through
+/// `(0, h cos ℓ, h sin ℓ)` along `(cos α, sin α cos ℓ, sin α sin ℓ)`; t from `from` to `to`
+/// degrees. A roll over more than half a turn is swept by halves (each passing once over most of
+/// its space) and joined.
+pub fn tumbled_torus(tube: f64, rate: f64, sign: f64, h: f64, lean: f64, tilt: f64, from: f64, to: f64)
+    -> Result<BrepSolid, Refusal> {
+    let torus = SolidTool::Revolved {
+        axis_origin: p(3.0, 0.0, 2.0),
+        axis_direction: p(0.0, 0.0, 1.0),
+        radial: p(1.0, 0.0, 0.0),
+        meridian: vec![OutlinePiece::Arc { centre: [1.0, 0.0], radius: tube, start: 0.0, end: TAU }],
+    };
+    let (l, a) = (lean.to_radians(), tilt.to_radians());
+    let tumble = |from: f64, to: f64| brep_kernel::TwoTurns {
+        axes: [
+            (p(2.0, 0.0, 0.0), p(0.0, 0.0, 1.0)),
+            (p(0.0, h * l.cos(), h * l.sin()), p(a.cos(), a.sin() * l.cos(), a.sin() * l.sin())),
+        ],
+        rates: [rate, sign],
+        from: from.to_radians(),
+        to: to.to_radians(),
+    };
+    if to - from <= 180.0 {
+        return Ok(brep_kernel::sweep_solid_tumbled(&torus, &tumble(from, to))?);
+    }
+    let middle = 0.5 * (from + to);
+    let first = brep_kernel::sweep_solid_tumbled(&torus, &tumble(from, middle))?;
+    let second = brep_kernel::sweep_solid_tumbled(&torus, &tumble(middle, to))?;
+    Ok(boolean_operation_nary(&[first, second], BooleanOperation::Union)?)
+}
+
+/// The crossed pair's operands: the torus of tube radius 0.22 tumbled by 0.7t about the vertical
+/// line through (2, 0, 0) and then by `sign·t` about the line through (0, 0.7071 cos 45°,
+/// 0.7071 sin 45°) along (cos 20°, sin 20° cos 45°, sin 20° sin 45°), t from −100° to 100°.
+pub fn crossed_tumble(sign: f64) -> Result<BrepSolid, Refusal> {
+    tumbled_torus(0.22, 0.7, sign, 0.7071, 45.0, 20.0, -100.0, 100.0)
+}
