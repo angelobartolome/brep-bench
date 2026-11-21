@@ -1,22 +1,22 @@
 //! What the thicken implementations share: a sheet (a face, or a shell of faces that is not
 //! closed) thickened into a solid.
 //!
-//! kentron has no thickening of a sheet (OCCT's `BRepOffset_MakeOffset` in its thickening mode),
-//! so `thickened` makes the same solid from the kernel's other operations: the sheet's faces are
-//! moved along their normals by `offset::shape` (which takes a shell or a face as well as a
-//! solid), each edge that bounds the sheet is joined to its moved image by a ruled loft (the wall
-//! that edge sweeps as the sheet moves), and the solid is the space the sheet, the moved sheet and
-//! the walls enclose (`boolean::enclosed_solids`, OCCT's `BOPAlgo_MakerVolume`).
-use crate::bench::{face_through, p, v, PICK_TOLERANCE};
+//! `thickened` is kentron's thickening of a sheet, `offset::thicken` (OCCT's
+//! `BRepOffset_MakeOffset` in its thickening mode): the space the sheet sweeps moving along its
+//! normals, bounded by the sheet, its offset (`offset::shape`), the walls its free edges sweep
+//! and, where the offset rounds a crease, the sectors closing the rounds' ends; where the sweep
+//! folds over itself (a bend thickened past its radius) or moves a face to its centre, the
+//! space it covers.
+use crate::bench::{face_through, p, v};
 use crate::Refusal;
 use kentron::geometry::curve::Circle;
-use kentron::geometry::ParametricCurve;
-use kentron::loft::{self, LoftOptions};
-use kentron::math::Point;
 use kentron::offset::{self, Join};
+use kentron::math::{Axis, Direction, Frame};
 use kentron::primitives::Cuboid;
+use kentron::sketch::{self, Outcome, Step};
 use kentron::topology::{Model, NodeKind, Shape};
-use kentron::{boolean, distance, make, sweep};
+use kentron::{make, sweep};
+use std::f64::consts::TAU;
 
 /// The creased sheet of the angle-bracket cases: the floor from (0, 0, 0) to (10, 8, 0) and the
 /// wall from (0, 0, 0) to (0, 8, 10), the polyline (10, 0, 0), (0, 0, 0), (0, 0, 10) swept along
@@ -57,72 +57,22 @@ pub fn tray(m: &mut Model) -> Result<Shape, Refusal> {
     Ok(shell)
 }
 
-/// The edges that bound `sheet`: each used once by its faces (not shared by two faces, nor a
-/// seam where one face closes on itself).
-pub fn free_edges(m: &Model, sheet: Shape) -> Vec<Shape> {
-    let mut uses: Vec<(Shape, usize)> = Vec::new();
-    for face in m.unique_subshapes(sheet, NodeKind::Face) {
-        for edge in m.explore(face, NodeKind::Edge).collect::<Vec<_>>() {
-            match uses.iter_mut().find(|(e, _)| e.node == edge.node) {
-                Some((_, n)) => *n += 1,
-                None => uses.push((edge, 1)),
-            }
-        }
-    }
-    uses.into_iter().filter(|&(e, n)| n == 1 && !m.is_degenerate(e)).map(|(e, _)| e).collect()
-}
-
-/// The point halfway along `edge`'s parameters.
-fn middle(m: &Model, edge: Shape) -> Result<Point, Refusal> {
-    let (curve, first, last) = m.edge_curve(edge).ok_or("an edge of the sheet without a curve")?;
-    Ok(curve.point(0.5 * (first + last)))
-}
-
 /// The solid between `sheet` and its faces moved `distance` along their normals (to the other
 /// side for a negative distance), the moved faces joined as `join` says where they part.
 pub fn thickened(m: &mut Model, sheet: Shape, distance: f64, join: Join) -> Result<Shape, Refusal> {
-    let bounds = free_edges(m, sheet);
-    let moved = offset::shape(m, sheet, distance, join)?;
-    let images = free_edges(m, moved);
-    if images.len() != bounds.len() {
-        // The rounds joining moved faces that part at a crease have ends of their own, which no
-        // edge of the sheet sweeps.
-        return Err("kentron has no thickening of a sheet, and its offset of the sheet joined by arcs rounds the creases with faces whose ends no edge of the sheet sweeps".into());
-    }
-    let mut faces = vec![sheet, moved];
-    for edge in bounds {
-        // The edge's image: the free edge of the moved sheet nearest the edge's middle.
-        let at = middle(m, edge)?;
-        let at = make::vertex(m, at);
-        let mut nearest: Option<(f64, Shape)> = None;
-        for &image in &images {
-            let d = distance::distance(m, at, image)?.value;
-            if nearest.is_none_or(|(best, _)| d < best) {
-                nearest = Some((d, image));
-            }
-        }
-        let (_, image) = nearest.ok_or("the moved sheet has no free edge")?;
-        let from = make::wire(m, &[edge])?;
-        let to = make::wire(m, &[image])?;
-        let wall = loft::loft(m, &[from, to], &LoftOptions { ruled: true, ..Default::default() })?;
-        faces.push(wall.shape);
-    }
-    // Of the pieces of space they enclose, the ones the moved sheet bounds: a closed sheet also
-    // encloses the space inside it on its own, which lies on no side of the thickening.
-    let enclosed = boolean::enclosed_solids(m, &faces)?;
-    let mut kept = Vec::new();
-    for solid in m.unique_subshapes(enclosed, NodeKind::Solid) {
-        if distance::distance(m, solid, moved)?.value < PICK_TOLERANCE {
-            kept.push(solid);
-        }
-    }
-    match kept[..] {
-        [] => Err("the sheet, its offset and the walls between them enclose no solid".into()),
-        [solid] => Ok(solid),
-        _ => {
-            let compound = m.new_empty(NodeKind::Compound);
-            m.add_all(compound, &kept)?;
-            Ok(compound)
-        }
-    }
+    Ok(offset::thicken(m, sheet, distance, join)?)
+}
+
+/// The cup of the thicken cases turned about the z axis: in the xz plane, the floor along the
+/// line from the axis out to (`floor`, 0, 0), the bend round the quarter circle of radius `bend`
+/// about (`floor`, 0, `bend`) out and up to (`floor` + `bend`, 0, `bend`), and the wall up the
+/// line to (`floor` + `bend`, 0, `top`), turned a whole turn: a disc, a piece of a torus and a
+/// cylinder, meeting tangentially.
+pub fn cup(m: &mut Model, floor: f64, bend: f64, top: f64) -> Result<Shape, Refusal> {
+    use Step::{Arc, Start, To};
+    let xz = Frame::new(p(0.0, 0.0, 0.0), Direction::NEG_Y, Direction::X);
+    // heading along +x, the arc's centre on the left, above the floor
+    let steps = [Start(0.0, 0.0), To(floor, 0.0), Arc { radius: bend, angle: 90.0 }, To(floor + bend, top)];
+    let profile = sketch::profile(m, xz, &steps, Outcome::OpenWire)?;
+    Ok(sweep::revolve(m, profile, Axis::Z, TAU)?.shape)
 }
