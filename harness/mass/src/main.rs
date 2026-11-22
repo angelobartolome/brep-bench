@@ -723,4 +723,82 @@ mod tests {
         );
         assert!((number("\"area\": ") / area - 1.0).abs() < 1e-12, "{}", out);
     }
+
+    /// A ball of radius 5 less the cap beyond x + z = 5, as AnvilCAD writes it: the upper
+    /// hemisphere's one loop runs round the equator and then the cut's circle, which touches the
+    /// equator at (5, 0, 0) and runs through the pole. Its inner integral starts at that pole:
+    /// from the other, a whole meridian weighs the noise in the angle's derivative by the pole.
+    #[test]
+    fn a_cut_through_a_pole_whose_loop_meets_itself() {
+        let s = format!(
+            "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n{}\nENDSEC;\nEND-ISO-10303-21;\n",
+            [
+                "#10=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));",
+                "#15=CARTESIAN_POINT('',(0.,0.,0.));",
+                "#16=DIRECTION('',(0.,0.,1.));",
+                "#17=DIRECTION('',(1.,0.,0.));",
+                "#18=AXIS2_PLACEMENT_3D('',#15,#16,#17);",
+                "#19=CARTESIAN_POINT('',(5.,0.,0.));",
+                "#20=VERTEX_POINT('',#19);",
+                "#21=CARTESIAN_POINT('',(0.,0.,0.));",
+                "#22=DIRECTION('',(0.,0.,-1.));",
+                "#23=DIRECTION('',(1.,0.,0.));",
+                "#24=AXIS2_PLACEMENT_3D('',#21,#22,#23);",
+                "#25=CIRCLE('',#24,5.);",
+                "#26=EDGE_CURVE('',#20,#20,#25,.T.);",
+                "#27=CARTESIAN_POINT('',(2.5,0.,2.5));",
+                "#28=DIRECTION('',(0.7071067812,0.,0.7071067812));",
+                "#29=DIRECTION('',(0.,1.,0.));",
+                "#30=AXIS2_PLACEMENT_3D('',#27,#28,#29);",
+                "#31=CIRCLE('',#30,3.5355339059);",
+                "#32=EDGE_CURVE('',#20,#20,#31,.T.);",
+                "#33=CARTESIAN_POINT('',(0.,0.,0.));",
+                "#34=DIRECTION('',(0.,0.,-1.));",
+                "#35=DIRECTION('',(1.,0.,0.));",
+                "#36=AXIS2_PLACEMENT_3D('',#33,#34,#35);",
+                "#37=SPHERICAL_SURFACE('',#36,5.);",
+                "#38=ORIENTED_EDGE('',*,*,#26,.T.);",
+                "#39=EDGE_LOOP('',(#38));",
+                "#40=FACE_OUTER_BOUND('',#39,.T.);",
+                "#41=ADVANCED_FACE('',(#40),#37,.T.);",
+                "#42=CARTESIAN_POINT('',(0.,0.,0.));",
+                "#43=DIRECTION('',(0.,0.,1.));",
+                "#44=DIRECTION('',(1.,0.,0.));",
+                "#45=AXIS2_PLACEMENT_3D('',#42,#43,#44);",
+                "#46=SPHERICAL_SURFACE('',#45,5.);",
+                "#47=ORIENTED_EDGE('',*,*,#26,.F.);",
+                "#48=ORIENTED_EDGE('',*,*,#32,.F.);",
+                "#49=EDGE_LOOP('',(#47,#48));",
+                "#50=FACE_OUTER_BOUND('',#49,.T.);",
+                "#51=ADVANCED_FACE('',(#50),#46,.T.);",
+                "#52=CARTESIAN_POINT('',(2.5,0.,2.5));",
+                "#53=DIRECTION('',(0.7071067812,0.,0.7071067812));",
+                "#54=DIRECTION('',(0.,1.,0.));",
+                "#55=AXIS2_PLACEMENT_3D('',#52,#53,#54);",
+                "#56=PLANE('',#55);",
+                "#57=ORIENTED_EDGE('',*,*,#32,.T.);",
+                "#58=EDGE_LOOP('',(#57));",
+                "#59=FACE_OUTER_BOUND('',#58,.T.);",
+                "#60=ADVANCED_FACE('',(#59),#56,.T.);",
+                "#61=CLOSED_SHELL('',(#41,#51,#60));",
+                "#62=MANIFOLD_SOLID_BREP('Body1',#61);",
+            ]
+            .join("\n")
+        );
+        let mut out = String::new();
+        measure(s.as_bytes(), 1).ok().unwrap().dump(&mut out);
+        let number = |key: &str| -> f64 {
+            let at = out.find(key).unwrap() + key.len();
+            out[at..].split(',').next().unwrap().trim().parse().unwrap()
+        };
+        let (r, h) = (5.0f64, 5.0 * (1.0 - 0.5f64.sqrt()));
+        let volume = 4.0 * PI * r.powi(3) / 3.0 - PI * h * h * (3.0 * r - h) / 3.0;
+        let area = 4.0 * PI * r * r - 2.0 * PI * r * h + PI * r * r / 2.0;
+        assert!(
+            (number("\"volume\": ") / volume - 1.0).abs() < 1e-9,
+            "{}",
+            out
+        );
+        assert!((number("\"area\": ") / area - 1.0).abs() < 1e-9, "{}", out);
+    }
 }
