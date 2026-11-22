@@ -231,7 +231,8 @@ pub fn unite_into(bodies: Vec<Solid>, tool: Solid) -> Result<Vec<Solid>, String>
 /// features drive the kernel (`anvil-model`'s `exact::blend`): an edge is picked by a point on
 /// it and stands for every edge between the same two faces, as AnvilCAD names it; the picked
 /// edges that run smoothly one into the next are blended together in one step so their blends
-/// join up; and the edges are found afresh after each step, since blending renumbers the solid.
+/// join up; the edges are found afresh after each step, since blending renumbers the solid; and,
+/// for a fillet, a corner where every edge is rounded is closed with the ball after the rounds.
 pub fn blend(
     solid: &Solid,
     points: &[[f64; 3]],
@@ -240,6 +241,20 @@ pub fn blend(
     use anvil_brep::blend::{blend_chain, edge_near, smooth_run};
     let mut solid = solid.clone();
     let mut left: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
+    // the corners the rounds' ball closes, found before blending renumbers the solid
+    let corners = match kind {
+        anvil_brep::blend::Blend::Fillet(radius) => {
+            let picked = left
+                .iter()
+                .map(|p| {
+                    edge_near(&solid, *p, 1e-6).ok_or_else(|| format!("no edge passes through {p}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let edges = same_faces(&solid, &picked);
+            anvil_brep::corner::ball_corners(&solid, &edges, radius).map_err(e)?
+        }
+        _ => Vec::new(),
+    };
     while !left.is_empty() {
         let picked = left
             .iter()
@@ -247,15 +262,11 @@ pub fn blend(
                 edge_near(&solid, *p, 1e-6).ok_or_else(|| format!("no edge passes through {p}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // AnvilCAD names an edge by its two faces, and blends every edge between them: a
-        // round edge that a boolean split into arcs is still one edge to pick.
-        let pairs: Vec<_> = picked.iter().map(|id| face_pair(&solid, *id)).collect();
-        let candidates: Vec<_> = (0..solid.edges.len() as u32)
-            .map(anvil_brep::EdgeId)
-            .filter(|id| {
-                picked.contains(id)
-                    || face_pair(&solid, *id).is_some_and(|p| pairs.contains(&Some(p)))
-            })
+        // a piece of an edge cut off inside a corner (by a neighbouring round) is left for the
+        // corner's patch to take away
+        let candidates: Vec<_> = same_faces(&solid, &picked)
+            .into_iter()
+            .filter(|id| !corners.iter().any(|c| c.holds_edge(&solid, *id)))
             .collect();
         let run = smooth_run(&solid, picked[0], &candidates);
         let tagged: Vec<_> = run.iter().map(|id| (*id, 0)).collect();
@@ -267,7 +278,39 @@ pub fn blend(
             .map(|(p, _)| p)
             .collect();
     }
+    for (i, corner) in corners.iter().enumerate() {
+        // the corner is about a ball's centre at a convex corner (the ball lies in the solid),
+        // at the vertex at a concave one (the rounds filled it)
+        let Some(first) = corner.patches.first() else {
+            continue;
+        };
+        let probe = if corner.convex {
+            first.centre
+        } else {
+            corner.vertex
+        };
+        if !anvil_brep::boolean::contains_point(&solid, probe).map_err(e)? {
+            return Err("a rounded corner is no longer in the solid".into());
+        }
+        let tags: Vec<u32> = (0..corner.face_count() as u32)
+            .map(|k| 100 + 8 * i as u32 + k)
+            .collect();
+        solid = one(anvil_brep::corner::close_corner(&solid, corner, 1, &tags).map_err(e)?)?;
+    }
     Ok(solid)
+}
+
+/// The picked edges and every other edge between the same two faces: AnvilCAD names an edge by
+/// its two faces, and blends every edge between them, so a round edge that a boolean split into
+/// arcs is still one edge to pick.
+fn same_faces(solid: &Solid, picked: &[anvil_brep::EdgeId]) -> Vec<anvil_brep::EdgeId> {
+    let pairs: Vec<_> = picked.iter().map(|id| face_pair(solid, *id)).collect();
+    (0..solid.edges.len() as u32)
+        .map(anvil_brep::EdgeId)
+        .filter(|id| {
+            picked.contains(id) || face_pair(solid, *id).is_some_and(|p| pairs.contains(&Some(p)))
+        })
+        .collect()
 }
 
 /// The two faces an edge lies between, in order, or `None` for an edge that is not between two.
@@ -365,6 +408,24 @@ pub fn chamfer_angle(
     let kind = anvil_brep::blend::Blend::ChamferAngle {
         distance,
         angle: degrees.to_radians(),
+        along: face_at(solid, along)?,
+    };
+    blend(solid, &[edge], kind)
+}
+
+/// The solid with the edge through `edge` chamfered `distance` back along the face through
+/// `along` and `other` along its other face, each a straight line from the edge in the plane square
+/// to it (on a curved face, the chord).
+pub fn chamfer_distances(
+    solid: &Solid,
+    edge: [f64; 3],
+    along: [f64; 3],
+    distance: f64,
+    other: f64,
+) -> Result<Solid, String> {
+    let kind = anvil_brep::blend::Blend::ChamferDistances {
+        distance,
+        other,
         along: face_at(solid, along)?,
     };
     blend(solid, &[edge], kind)

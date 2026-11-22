@@ -17,7 +17,6 @@
 "chamfer/ball-in-conical-seat-distance-2-angle-30" = "no sphere primitive, no cone primitive"
 "chamfer/ball-in-conical-seat-distance-3-angle-15" = "no sphere primitive, no cone primitive"
 "chamfer/ball-on-plate-rim-distance-2-angle-45" = "no sphere primitive"
-"chamfer/box-top-asymmetric" = "no chamfer with two distances"
 "chamfer/capped-frustum-rim-distance-1-angle-45" = "no sphere primitive, no cone primitive"
 "chamfer/capped-frustum-rim-distance-1-angle-60" = "no sphere primitive, no cone primitive"
 "chamfer/capped-frustum-rim-distance-2-angle-45" = "no sphere primitive, no cone primitive"

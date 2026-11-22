@@ -1,6 +1,12 @@
-//! A spherical sector, its rim chamfered 2 down the cone and 1 on the ball.
-use anvil_brep::Solid;
+//! A spherical sector, the ball of radius 5 about the origin inside the cone about the z axis with
+//! its apex at the origin and half angle α, cos α = 3/5; its rim chamfered 2 down the cone and 1
+//! on the ball.
+use anvil_brep::{Frame, Solid};
+
+use crate::shared::{ball, chamfer_distances, cone, intersect, ring};
 
 pub fn build() -> Result<Solid, String> {
-    Err("anvil-brep's chamfers set back one distance on both faces, or one distance and an angle; it has no chamfer of two distances, and on a curved face no angle gives the second".into())
+    // the cone, from its apex up past the ball: tan α = 4. / 3.
+    let sector = intersect(&ball([0., 0., 0.], 5.)?, &cone(&Frame::world(), 0., 6. * (4. / 3.), 6.)?)?;
+    chamfer_distances(&sector, ring(4., 3.), ring(2., 1.5), 2., 1.)
 }

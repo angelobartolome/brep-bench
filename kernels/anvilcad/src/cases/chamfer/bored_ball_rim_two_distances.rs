@@ -1,6 +1,10 @@
-//! A bored ball, the upper rim chamfered 2 down the bore and 1 on the ball.
-use anvil_brep::Solid;
+//! A ball of radius 5 about the origin bored through along z with radius 2, its upper rim
+//! chamfered 2 down the bore and 1 on the ball.
+use anvil_brep::{Frame, Solid};
+
+use crate::shared::{ball, chamfer_distances, cylinder, ring, subtract};
 
 pub fn build() -> Result<Solid, String> {
-    Err("anvil-brep's chamfers set back one distance on both faces, or one distance and an angle; it has no chamfer of two distances, and on a curved face no angle gives the second".into())
+    let bored = subtract(&ball([0., 0., 0.], 5.)?, &cylinder(&Frame::world(), 2., -6., 6.)?)?;
+    chamfer_distances(&bored, ring(2., 21f64.sqrt()), ring(2., 0.), 2., 1.)
 }
