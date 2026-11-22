@@ -30,6 +30,6 @@ pub fn build() -> Result<BrepSolid, Refusal> {
         end: 52.0,
     };
     let motion = TwoTurns { axes: [axis, (p(0.0, 0.0, 0.0), p(0.0, 0.0, 1.0))], rates: [1.0, -1.0 / 30.0], from: 0.0, to: 60.0 * PI };
-    let blank = RingBlank { inner: 40.0, outer: 52.0, bottom: -6.0, face: 2.0 };
+    let blank = RingBlank { inner: 40.0, outer: 52.0, bottom: -6.0, face: 2.0, face_outer: 2.0 };
     Ok(thread_gear(&thread, &motion, &blank, 30)?)
 }
