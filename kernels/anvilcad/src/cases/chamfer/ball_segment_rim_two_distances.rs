@@ -1,6 +1,10 @@
-//! A ball cut flat above its middle, its rim chamfered 2 on the flat and 1 on the ball.
+//! A ball of radius 5 about the origin below z = 3, its rim chamfered 2 on the flat and 1 on the
+//! ball.
 use anvil_brep::Solid;
 
+use crate::shared::{ball, beyond, chamfer_distances, ring, subtract};
+
 pub fn build() -> Result<Solid, String> {
-    Err("anvil-brep's chamfers set back one distance on both faces, or one distance and an angle; it has no chamfer of two distances, and on a curved face no angle gives the second".into())
+    let segment = subtract(&ball([0., 0., 0.], 5.)?, &beyond([0., 0., 3.], [0., 0., 1.], 10.)?)?;
+    chamfer_distances(&segment, ring(4., 3.), ring(1., 3.), 2., 1.)
 }
