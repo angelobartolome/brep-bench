@@ -71,7 +71,9 @@ fn refused(why: String) -> String {
 /// reply's `step_error` field saying why (else nothing).
 fn step(b: &Brep, out_step: Option<&str>, case: &str) -> String {
     let step_error = out_step.and_then(|path| {
-        cad_kernel::step::write(b, case, tolerance(b.size()))
+        // no tolerance is asked of a case, so the file's fitted curves are held to the exact ones:
+        // the harness measures the solid the kernel built
+        cad_kernel::step::write(b, case, tolerance(b.size()), cad_kernel::step::Fit::Exact)
             .and_then(|text| std::fs::write(path, text).map_err(|e| e.to_string()))
             .err()
     });
