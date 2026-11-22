@@ -1,0 +1,17 @@
+[package]
+name = "brep-bench-anvilcad"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "The brep-bench runner for AnvilCAD's exact kernel, anvil-brep: one anvil-brep program per case."
+publish = false
+
+[dependencies]
+# AnvilCAD's exact B-rep kernel and its STEP writer, from AnvilCAD's repository at a commit
+# (release 0.1.2): the scoreboard says which, and moving to another is a change made here
+anvil-brep = { git = "https://github.com/swperb/anvilcad", rev = "44a2dd5d4a4ffbfb86b4009cb38b4732cb8ef389" }
+anvil-step = { git = "https://github.com/swperb/anvilcad", rev = "44a2dd5d4a4ffbfb86b4009cb38b4732cb8ef389" }
+glam = "0.34"
+
+[profile.release]
+debug = 0
