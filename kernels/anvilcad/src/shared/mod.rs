@@ -229,9 +229,9 @@ pub fn unite_into(bodies: Vec<Solid>, tool: Solid) -> Result<Vec<Solid>, String>
 
 /// The solid with the edges through `points` blended, as AnvilCAD's own fillet and chamfer
 /// features drive the kernel (`anvil-model`'s `exact::blend`): an edge is picked by a point on
-/// it, the picked edges that run smoothly one into the next are blended together in one step so
-/// their blends join up, and the edges are found afresh after each step, since blending
-/// renumbers the solid.
+/// it and stands for every edge between the same two faces, as AnvilCAD names it; the picked
+/// edges that run smoothly one into the next are blended together in one step so their blends
+/// join up; and the edges are found afresh after each step, since blending renumbers the solid.
 pub fn blend(
     solid: &Solid,
     points: &[[f64; 3]],
@@ -247,7 +247,17 @@ pub fn blend(
                 edge_near(&solid, *p, 1e-6).ok_or_else(|| format!("no edge passes through {p}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let run = smooth_run(&solid, picked[0], &picked);
+        // AnvilCAD names an edge by its two faces, and blends every edge between them: a
+        // round edge that a boolean split into arcs is still one edge to pick.
+        let pairs: Vec<_> = picked.iter().map(|id| face_pair(&solid, *id)).collect();
+        let candidates: Vec<_> = (0..solid.edges.len() as u32)
+            .map(anvil_brep::EdgeId)
+            .filter(|id| {
+                picked.contains(id)
+                    || face_pair(&solid, *id).is_some_and(|p| pairs.contains(&Some(p)))
+            })
+            .collect();
+        let run = smooth_run(&solid, picked[0], &candidates);
         let tagged: Vec<_> = run.iter().map(|id| (*id, 0)).collect();
         solid = one(blend_chain(&solid, &tagged, kind, 1).map_err(e)?)?;
         left = left
@@ -258,6 +268,14 @@ pub fn blend(
             .collect();
     }
     Ok(solid)
+}
+
+/// The two faces an edge lies between, in order, or `None` for an edge that is not between two.
+fn face_pair(solid: &Solid, edge: anvil_brep::EdgeId) -> Option<(u32, u32)> {
+    match solid.edge_faces(edge)[..] {
+        [a, b] => Some((a.0.min(b.0), a.0.max(b.0))),
+        _ => None,
+    }
 }
 
 /// The solid with the edges through `points` rounded to `radius`.
