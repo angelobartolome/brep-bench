@@ -204,9 +204,37 @@ impl<'a> Face<'a> {
                 best.unwrap_or(sing[0])
             };
         } else {
-            // the pole nearer the face, so that a small face by a pole is not the difference of
-            // the whole surface and most of it
-            let near = match (below.last(), above.first()) {
+            // a pole a loop runs through, where H is zero: near a pole the angle along it is only
+            // as good as inversion makes it, and its derivative there is noise, which H must
+            // cancel (from the other pole, H there is a whole column, and the noise counts)
+            let through: Vec<f64> = sing
+                .iter()
+                .copied()
+                .filter(|x| {
+                    paths.iter().flatten().any(|p| {
+                        let close = |q: Uv| (q.1 - x).abs() <= 1e-9 * (1.0 + x.abs());
+                        close(p.start()) || close(p.end())
+                    })
+                })
+                .collect();
+            // else the pole nearer the face, so that a small face by a pole is not the difference
+            // of the whole surface and most of it
+            let (nb, na) = if through.is_empty() {
+                (below.clone(), above.clone())
+            } else {
+                let b: Vec<f64> = through
+                    .iter()
+                    .copied()
+                    .filter(|x| *x < first.1 - eps)
+                    .collect();
+                let a: Vec<f64> = through
+                    .iter()
+                    .copied()
+                    .filter(|x| *x > first.1 + eps)
+                    .collect();
+                (b, a)
+            };
+            let near = match (nb.last(), na.first()) {
                 (Some(b), Some(a)) => Some(if (a - first.1).abs() < (b - first.1).abs() {
                     *a
                 } else {
