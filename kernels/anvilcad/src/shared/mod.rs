@@ -564,3 +564,27 @@ pub fn stadium(a: (f64, f64), b: (f64, f64), r: f64) -> Loop2 {
         },
     ])
 }
+
+/// The arc of the circle of `radius` about `center` from `start` degrees, turning `sweep` degrees
+/// (positive anticlockwise).
+pub fn arc_deg(center: (f64, f64), radius: f64, start: f64, sweep: f64) -> Segment {
+    Segment::Arc {
+        center: v2(center.0, center.1),
+        radius,
+        start: start.to_radians(),
+        sweep: sweep.to_radians(),
+    }
+}
+
+/// The middle of each piece of `outline`, at height `z`: points to pick the edges a prism over it
+/// has there, such as the rim of its top.
+pub fn rim(outline: &Loop2, z: f64) -> Vec<[f64; 3]> {
+    outline
+        .segments
+        .iter()
+        .map(|s| {
+            let m = s.midpoint();
+            [m.x, m.y, z]
+        })
+        .collect()
+}
