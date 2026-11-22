@@ -2,12 +2,12 @@
  "kernel": "anvilcad",
  "version": "anvil-brep 0.1.2 at 946219a (brep-bench runner 0.1.0)",
  "measured": "mesh",
- "run": "2026-11-22T07:13:00Z",
+ "run": "2026-11-22T17:57:52Z",
  "host": {
   "cpu": "AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics",
   "cores": 16,
   "system": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
-  "least_mb": 12.3
+  "least_mb": 12.2
  },
  "startup": {
   "seconds": 0.001636,
@@ -22,9 +22,9 @@
   ]
  },
  "tally": {
-  "pass": 190,
+  "pass": 192,
   "refused": 328,
-  "wrong": 15
+  "wrong": 13
  },
  "cases": [
   {
@@ -13395,39 +13395,39 @@
   },
   {
    "case": "swept/bar-swung-partway-into-ring-sector",
-   "outcome": "wrong",
-   "why": "volume 76.4999197063 against 76.4953761289 (its STEP's); area 168.192005569 against 168.186155249 (its STEP's)",
-   "seconds": 0.006414,
-   "cpu_seconds": 0.005757,
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.011664,
+   "cpu_seconds": 0.010963,
    "time_places": 6,
-   "peak_mb": 12.3,
-   "own_seconds": 0.004794,
-   "own_cpu_seconds": 0.004709,
+   "peak_mb": 12.0,
+   "own_seconds": 0.00939,
+   "own_cpu_seconds": 0.009274,
    "measured": "step",
-   "volume": 76.49991970630231,
-   "area": 168.19200556903678,
-   "faces": 16,
+   "volume": 76.49537612834925,
+   "area": 168.18615524866777,
+   "faces": 17,
    "mesh": null,
    "centroid": [
-    8.23074774081088,
-    5.020842142429774,
-    3.273550446693056e-13
+    8.23067612554333,
+    5.020803901577491,
+    3.2770340146402764e-13
    ],
    "inertia": [
     [
-     571.7497858564429,
-     247.12087759354685,
-     4.5718899592922096e-10
+     571.7473071426333,
+     247.12437529275874,
+     4.571544812069433e-10
     ],
     [
-     247.12087759354685,
-     279.2900062480728,
-     -4.390834225023651e-12
+     247.12437529275874,
+     279.28283801132784,
+     -4.396202300337412e-12
     ],
     [
-     4.5718899592922096e-10,
-     -4.390834225023651e-12,
-     796.935468294798
+     4.571544812069433e-10,
+     -4.396202300337412e-12,
+     796.9269118029478
     ]
    ],
    "step": {
@@ -13435,19 +13435,19 @@
     "form": "advanced",
     "solids": 1,
     "shells": 1,
-    "faces": 16,
-    "loops": 17,
-    "edges": 37,
+    "faces": 17,
+    "loops": 18,
+    "edges": 38,
     "vertices": 24,
     "surfaces": {
      "plane": 12,
-     "cylinder": 4
+     "cylinder": 5
     },
     "curves": {
-     "line": 27,
-     "circle": 10
+     "line": 26,
+     "circle": 12
     },
-    "triangles": 0,
+    "triangles": 2,
     "unpaired": 0
    }
   },
@@ -14539,39 +14539,39 @@
   },
   {
    "case": "swept/rod-spun-about-a-line-through-it",
-   "outcome": "wrong",
-   "why": "volume 41.6596176291 against 41.6857061747 (its STEP's); area 111.431446071 against 111.350261639 (its STEP's)",
-   "seconds": 0.018433,
-   "cpu_seconds": 0.017556,
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.120729,
+   "cpu_seconds": 0.119976,
    "time_places": 6,
-   "peak_mb": 12.3,
-   "own_seconds": 0.015954,
-   "own_cpu_seconds": 0.015863,
+   "peak_mb": 12.2,
+   "own_seconds": 0.118076,
+   "own_cpu_seconds": 0.117951,
    "measured": "step",
-   "volume": 41.65961762913967,
-   "area": 111.43144607137008,
-   "faces": 20,
+   "volume": 41.685706292606675,
+   "area": 111.35026201916523,
+   "faces": 16,
    "mesh": null,
    "centroid": [
-    0.7167728316843517,
-    1.2414869619762776,
-    5.622552468914959e-14
+    0.7163356981203294,
+    1.2407298244382015,
+    5.6190882300317697e-14
    ],
    "inertia": [
     [
-     179.6891408384045,
-     -19.566825666700883,
-     4.072503140168361e-11
+     179.86949513311683,
+     -19.491319960726013,
+     4.072400722072219e-11
     ],
     [
-     -19.566825666700883,
-     157.0953167072806,
-     -1.775050002966495e-11
+     -19.491319960726013,
+     157.36285748201553,
+     -1.7752319632335884e-11
     ],
     [
-     4.072503140168361e-11,
-     -1.775050002966495e-11,
-     330.08776836737877
+     4.072400722072219e-11,
+     -1.7752319632335884e-11,
+     330.5334874903646
     ]
    ],
    "step": {
@@ -14579,21 +14579,21 @@
     "form": "advanced",
     "solids": 1,
     "shells": 1,
-    "faces": 20,
-    "loops": 20,
-    "edges": 31,
+    "faces": 16,
+    "loops": 16,
+    "edges": 27,
     "vertices": 13,
     "surfaces": {
-     "plane": 12,
      "cylinder": 6,
-     "sphere": 2
+     "sphere": 6,
+     "plane": 4
     },
     "curves": {
      "circle": 14,
-     "line": 14,
+     "line": 10,
      "ellipse": 3
     },
-    "triangles": 6,
+    "triangles": 4,
     "unpaired": 0
    }
   },
