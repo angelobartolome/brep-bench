@@ -4,7 +4,7 @@
 // on the cases both pass, the medians by category, the runs that cost most, and how well each
 // kernel uses many cores.  One row of filters above scopes them all, and is kept in the address.
 // Kernels keep kernels.json's order, but for the strip's rows, which its header puts in
-// alphabetical order or in order of their mean (kept in the address too).
+// alphabetical order or in order of their median (kept in the address too).
 import { load, esc, casePage, kernelPage, failed, secondsText, megabytesText, solved, quantile,
          option, placeTip, PARALLEL_FROM, FINEST_TIME_FLOOR, GROUPS, groupOf } from './board.js';
 import { sortable } from './sort.js';
@@ -96,8 +96,9 @@ function start(b) {
     // whether a time counts what starting the runner costs: left out unless asked for
     start: params.get('start') === 'counted' ? 'counted' : '',
     cat: b.categories.some((c) => c.name === params.get('cat')) ? params.get('cat') : '',
-    // the strip's rows: alphabetical, or by their mean
-    order: params.get('order') === 'mean' ? 'mean' : '',
+    // the strip's rows: alphabetical, or by their median (`mean`, an earlier address's word for
+    // the order, taken as it)
+    order: ['median', 'mean'].includes(params.get('order')) ? 'median' : '',
   };
   main.innerHTML = `
     <div class=controls>
@@ -161,7 +162,7 @@ function start(b) {
     const some = rows.some((r) => r.at.length);
     figures.innerHTML = some ? `
       <h2>By kernel <span class=order role=group aria-label='Order the kernels'>${
-        [['', 'A–Z'], ['mean', `by mean ${m.label}`]].map(([v, l]) => `<button type=button
+        [['', 'A–Z'], ['median', `by median ${m.label}`]].map(([v, l]) => `<button type=button
         class=chip data-order='${v}' aria-pressed=${state.order === v}>${esc(l)}</button>`)
         .join('')}</span></h2>
       <p class=muted>${m.about}${m.zero ? '' : ' The scale is logarithmic.'} Over the dots, a faint box spans the
@@ -214,16 +215,16 @@ function start(b) {
   update();
 }
 
-// The strip's rows in `order`: alphabetical by kernel name, or by the mean of the dots each draws
-// (the cases in the filter it has a measure of), best first (least, unless more is better), the
-// kernels with no dots last.
+// The strip's rows in `order`: alphabetical by kernel name, or by the median the strip marks
+// (over the cases in the filter each passes or builds, as the table's), best first (least,
+// unless more is better), the kernels with none last.
 function ordered(rows, order, m) {
   const byName = (p, q) => p.k.name.localeCompare(q.k.name, undefined, { sensitivity: 'base' });
-  if (order !== 'mean') return [...rows].sort(byName);
-  const mean = new Map(rows.map((r) => [r, r.at.length
-    ? r.at.reduce((s, i) => s + r.k[m.key][i], 0) / r.at.length : null]));
+  if (order !== 'median') return [...rows].sort(byName);
+  const median = new Map(rows.map(({ k, at }) => [k, quantile(at
+    .filter((i) => solved(k.outcomes[i])).map((i) => k[m.key][i]).sort((x, y) => x - y), 0.5)]));
   return [...rows].sort((p, q) => {
-    const [a, c] = [mean.get(p), mean.get(q)];
+    const [a, c] = [median.get(p.k), median.get(q.k)];
     if (a == null || c == null) return (a == null) - (c == null) || byName(p, q);
     return (m.higher ? c - a : a - c) || byName(p, q);
   });
