@@ -44,14 +44,14 @@ THREE = "https://cdn.jsdelivr.net/npm/three@0.160.0"
 OCCT_JS = "https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist"
 KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist"
 
-def head(title, description, depth, v=""):
+def head(title, description, depth):
     up = "../" * depth
     return [
         "<!doctype html><html lang=en><head><meta charset=utf-8>",
         "<meta name=viewport content='width=device-width, initial-scale=1'>",
         f"<title>{html.escape(title)}</title>",
         f"<meta name=description content='{html.escape(description)}'>",
-        f"<link rel=stylesheet href='{up}style.css{v}'>",
+        f"<link rel=stylesheet href='{up}style.css'>",
         f"<link rel=icon href='{up}favicon.ico' sizes=32x32>",
         f"<link rel=icon href='{up}favicon.svg' type='image/svg+xml'>",
         f"<link rel=apple-touch-icon href='{up}apple-touch-icon.png'></head><body>",
@@ -360,7 +360,7 @@ def case_page(c, registry, results, drawing, prev=None, after=None, v=""):
     up = "../" * depth
     out = head(f"{c['title']} · brep-bench", f"The brep-bench case {cid}: its description, its "
                "drawing, and each kernel's entry: its result in 3D, its measures and its code.",
-               depth, v)
+               depth)
     steps = [f"<a href='{up}explore.html?cat={q(category)}'>{e(category)}</a>"]
     if prev:
         steps.append(f"<a href='{up}cases/{e(prev)}.html' rel=prev>← "
@@ -583,18 +583,14 @@ def case_page(c, registry, results, drawing, prev=None, after=None, v=""):
         out += [reference_section(en, exp) if en is ref_en else entry(en, exp)
                 for en in entries]
         out.append(PICK)
-
-    out.append(f"<p class=muted><a href='{REPO}/blob/main/cases/{e(cid)}.md'>{e(cid)}.md</a>, "
-               "the case as written.</p>")
-    # the viewer's import map before any module script: a browser that takes one map only
-    # (Safari, Firefox before 138, Chrome before 133) ignores a map added after a module has
-    # begun to load, and three.js cannot then be named
-    if has_view:
-        out.append(VIEWER.replace("{cdn}", THREE).replace("{occt}", OCCT_JS))
-    if entries:
         # the table of entries sorted by a click on a row's head (the board's sort.js)
         out.append(f"<script type=module>import {{ sortable }} from '{up}sort.js{v}'; "
                    "sortable(document);</script>")
+
+    out.append(f"<p class=muted><a href='{REPO}/blob/main/cases/{e(cid)}.md'>{e(cid)}.md</a>, "
+               "the case as written.</p>")
+    if has_view:
+        out.append(VIEWER.replace("{cdn}", THREE).replace("{occt}", OCCT_JS))
     if (exp and any(exp[k]["tex"] for k in exp)) or "class='math" in description:
         out.append(TEX.replace("{cdn}", KATEX))
     out.append("</body></html>")
@@ -962,22 +958,7 @@ if (window.katex) {
 VIEWER = """<script type=importmap>
 {"imports": {"three": "{cdn}/build/three.module.js", "three/addons/": "{cdn}/examples/jsm/"}}
 </script>
-<script>
-// where the viewer's own script cannot load (three.js unreachable, or not named), its spinner
-// stops and says so, rather than turning for ever
-function viewerFailed() {
-  const spinner = document.getElementById('loading');
-  if (!spinner || spinner.hidden) return;
-  spinner.hidden = true;
-  const note = document.getElementById('faces-note');
-  note.textContent = 'The 3D viewer could not load (three.js did not load).';
-  note.hidden = false;
-}
-addEventListener('error', (event) => {
-  if (/three|module specifier/i.test(String(event.message))) viewerFailed();
-});
-</script>
-<script type=module onerror='viewerFailed()'>
+<script type=module>
 import * as THREE from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -1567,11 +1548,11 @@ picked(first && { src: first.dataset.src, step: first.dataset.step });
 
 
 def web(data):
-    """Copy harness/web/ into site/, each address of a script, of the style sheet or of
-    board.json given a version (`?v=` and a hash of harness/web/'s files and of `data`,
-    board.json's bytes). GitHub Pages lets a browser keep a file for ten minutes, so without it
-    a browser can pair a deploy's pages with the last deploy's scripts, style sheet or
-    board.json, and draw nothing.  Returns the version, for the case pages' addresses."""
+    """Copy harness/web/ into site/, each address of a script or of board.json given a version
+    (`?v=` and a hash of the scripts and of `data`, board.json's bytes). GitHub Pages lets a
+    browser keep a file for ten minutes, so without it a browser can pair a deploy's scripts
+    with the last deploy's board.json, or the reverse, and draw nothing.  Returns the version,
+    for the case pages' addresses of the scripts."""
     names = sorted(os.listdir(WEB))
     digest = hashlib.sha256(data)
     for name in names:
@@ -1588,7 +1569,6 @@ def web(data):
         text = text.replace("'board.json'", f"'board.json{v}'")
         if name.endswith(".html"):
             text = re.sub(r"src='(\w+\.js)'", rf"src='\1{v}'", text)
-            text = text.replace("href='style.css'", f"href='style.css{v}'")
         else:
             text = re.sub(r"from '\./(\w+\.js)'", rf"from './\1{v}'", text)
         with open(dest, "w", encoding="utf-8") as f:
