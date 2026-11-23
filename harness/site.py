@@ -959,14 +959,14 @@ VIEWER = """<script type=importmap>
 {"imports": {"three": "{cdn}/build/three.module.js", "three/addons/": "{cdn}/examples/jsm/"}}
 </script>
 <script>
-// where the viewer's own script cannot load (three.js unreachable, or not named), its spinner
-// stops and says so, rather than turning for ever
-function viewerFailed() {
+// where the viewer cannot start (three.js unreachable or not named, or the browser gives it no
+// WebGL), its spinner stops and says why, rather than turning for ever
+function viewerFailed(why = 'three.js did not load') {
   const spinner = document.getElementById('loading');
   if (!spinner || spinner.hidden) return;
   spinner.hidden = true;
   const note = document.getElementById('faces-note');
-  note.textContent = 'The 3D viewer could not load (three.js did not load).';
+  note.textContent = `The 3D viewer could not start: ${why}.`;
   note.hidden = false;
 }
 addEventListener('error', (event) => {
@@ -982,7 +982,16 @@ const canvas = document.getElementById('viewer');
 // the spinner over the canvas, turning until the solid asked for is drawn
 const spinner = document.getElementById('loading');
 const loading = (on) => { spinner.hidden = !on; };
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+} catch (error) {
+  // WebGL off in the browser (its graphics acceleration turned off, or its GPU process failed)
+  viewerFailed('this browser could not create a WebGL context, so it cannot draw 3D. In Chrome, '
+    + 'turn on Settings › System › Use graphics acceleration when available, relaunch it, and '
+    + 'see chrome://gpu');
+  throw error;
+}
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 1e6);
