@@ -28,6 +28,9 @@ body { background: var(--bg); color: var(--fg); margin: 0 auto; max-width: 1100p
 body.wide { max-width: 1600px; }
 h1 { font-size: 1.6em; margin: 0 0 4px; }
 h2 { margin-top: 32px; }
+/* a heading's choice of order, beside it (the performance page's strip) */
+h2 .order { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 12px;
+            vertical-align: middle; font-size: 13px; font-weight: normal; }
 p.lede { color: var(--muted); margin: 0 0 24px; max-width: 80ch; }
 /* the definition, folded (fold.js): its first sentence and the line after it, which fades out;
    the height here is that at the full measure, and fold.js sets it for the measure in hand */
