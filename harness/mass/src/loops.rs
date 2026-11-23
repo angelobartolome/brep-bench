@@ -82,6 +82,14 @@ impl Path {
         (a.0 + f * (b.0 - a.0), a.1 + f * (b.1 - a.1))
     }
 
+    /// The path's points on the (u, v) plane, in order: a line's two ends, else its samples.
+    pub fn points(&self) -> impl Iterator<Item = Uv> + '_ {
+        let ends = self.line.map(|(a, b)| [a, b]);
+        ends.into_iter()
+            .flatten()
+            .chain(self.rf.iter().map(|x| x.1))
+    }
+
     pub fn start(&self) -> Uv {
         match self.line {
             Some((a, _)) => a,
