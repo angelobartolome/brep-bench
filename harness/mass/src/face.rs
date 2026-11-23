@@ -36,6 +36,10 @@ pub struct Face<'a> {
     points: Vec<[f64; 6]>,
 }
 
+/// Why a face is no face, as the standard reads its loops: they run clockwise about its normal,
+/// on a surface they do not close round.
+pub const UNBOUNDED: &str = "a face whose loops bound no region of its surface";
+
 fn bisect_right(a: &[f64], x: f64) -> usize {
     let (mut lo, mut hi) = (0, a.len());
     while lo < hi {
@@ -95,13 +99,133 @@ impl<'a> Face<'a> {
     /// directs them by the surface's normal would mean it.
     pub fn measure(
         s0: Arc<Surface>,
-        mut loops: Vec<Loop>,
+        loops: Vec<Loop>,
         same_sense: bool,
         centre: V3,
         scale: f64,
         index: usize,
         failed: &'a AtomicUsize,
     ) -> R<(Settled, Option<Settled>, Option<Settled>)> {
+        let (mut face, paths, transposed) =
+            Face::laid(s0, loops, same_sense, centre, scale, index, failed)?;
+        let bounded = !paths.is_empty();
+        let periods = face.s.periods();
+        let singular = face.s.singular();
+        let mut total = [0.0; NM];
+        for ps in &paths {
+            for p in ps {
+                let part = face.green(p)?;
+                for i in 0..NM {
+                    total[i] += part[i];
+                }
+            }
+        }
+        if !bounded && face.s0.not_mirrored() {
+            if let Some(per) = periods[1] {
+                let mut turns = Vec::new();
+                for x in singular.iter().filter(|x| x.axis == 1) {
+                    turns.push(round9(pymod(x.val, per)?));
+                }
+                if sorted_set(turns).len() > 1 {
+                    // bounded by points alone, on a surface whose closed profile meets its axis
+                    // twice: the face could be either part of the profile turned
+                    return unsupported(
+                        "a face bounded by points alone, on a surface whose closed profile \
+                         meets its axis twice: which part of it is the face is not said",
+                    );
+                }
+            }
+        }
+        let sigma = (if face.ss { 1.0 } else { -1.0 }) * (if transposed { -1.0 } else { 1.0 });
+        let tau = if transposed { -1.0 } else { 1.0 };
+        // the face as the standard reads its loops (by its own normal, sigma), and, where that
+        // differs, as a writer who directs them by the surface's normal would mean it (tau)
+        let standard = face.settle(&total, sigma, sigma, false)?;
+        let other = if tau != sigma {
+            Some(face.settle(&total, tau, sigma, false)?)
+        } else {
+            None
+        };
+        // and, where a loop along a seam runs against the standard, as its writer means it: the
+        // region the loop unwraps to, which the seam is in
+        let seamed = if face.seam {
+            Some(face.settle(&total, sigma, sigma, true)?).filter(|x| *x != standard)
+        } else {
+            None
+        };
+        Ok((standard, other, seamed))
+    }
+
+    /// Whether the face's loops, as the standard reads them, plainly bound no region of its
+    /// surface (`UNBOUNDED`): what `measure` would find of it, told from the loops alone, by the
+    /// area in (u, v) of the polygons through their paths' samples, -∮ (v - v_ref) du. It takes
+    /// no integral, so it is known of every face at once, before any is measured, however long
+    /// that takes. The polygons' area is taken twice, through every sample and through every
+    /// other one, and the two extrapolated (the area is off as the square of the samples'
+    /// spacing); the face is said to bound nothing only where its area is against the standard by
+    /// far more than the two differ, and every sample lies on the surface where its (u, v) says.
+    /// Any other face is left to `measure`.
+    pub fn unbounded(
+        s0: Arc<Surface>,
+        loops: Vec<Loop>,
+        same_sense: bool,
+        centre: V3,
+        scale: f64,
+    ) -> R<bool> {
+        let failed = AtomicUsize::new(usize::MAX);
+        let (face, paths, transposed) =
+            Face::laid(s0, loops, same_sense, centre, scale, 0, &failed)?;
+        if face.turn().is_some() {
+            // what its loops leave open is made up in whole turns of the surface (`settle`):
+            // its area comes to more than nothing whichever way they run
+            return Ok(false);
+        }
+        // (the area, and its pieces each taken as positive: the size it is held against)
+        let (mut fine, mut coarse, mut gross) = (0.0, 0.0, 0.0);
+        for p in paths.iter().flatten() {
+            let along: Vec<Uv> = match (&p.line, &p.c) {
+                (Some((a, b)), _) => vec![*a, *b],
+                (None, Some(c)) => {
+                    for (t, uv) in &p.rf {
+                        if norm(sub(face.s.ev(uv.0, uv.1)?.0, c.point(*t)?)) > 1e-6 * scale {
+                            return Ok(false); // a path that is not where its edge is: not told
+                        }
+                    }
+                    p.rf.iter().map(|x| x.1).collect()
+                }
+                (None, None) => return Ok(false),
+            };
+            let strip = |a: Uv, b: Uv| -((a.1 + b.1) / 2.0 - face.vref) * (b.0 - a.0);
+            for w in along.windows(2) {
+                fine += strip(w[0], w[1]);
+                gross += strip(w[0], w[1]).abs();
+            }
+            let last = along.len().saturating_sub(1);
+            let mut k = 0;
+            while k < last {
+                let next = (k + 2).min(last);
+                coarse += strip(along[k], along[next]);
+                k = next;
+            }
+        }
+        let area = fine + (fine - coarse) / 3.0;
+        let sigma = (if face.ss { 1.0 } else { -1.0 }) * (if transposed { -1.0 } else { 1.0 });
+        // (and by more than `settle` takes for a face of no area)
+        Ok(sigma * area < -(4.0 * (fine - coarse).abs() + 1e-6 * gross)
+            && area.abs() > 1e-9 * pymax(1.0, scale * scale))
+    }
+
+    /// The face set up to be integrated over: its loops' paths on the (u, v) plane the inner
+    /// integral runs along v of, and whether that is the surface's own with u and v swapped.
+    fn laid(
+        s0: Arc<Surface>,
+        mut loops: Vec<Loop>,
+        same_sense: bool,
+        centre: V3,
+        scale: f64,
+        index: usize,
+        failed: &'a AtomicUsize,
+    ) -> R<(Face<'a>, Vec<Vec<Path>>, bool)> {
         // the inner integral runs along the parameter no loop winds round; where none winds, along
         // the one whose ends are poles (a sphere's or a revolution's meridian), else v
         let poles = s0.singular();
@@ -271,92 +395,55 @@ impl<'a> Face<'a> {
             points: Vec::new(),
         };
         face.layout(&singular);
-        let mut total = [0.0; NM];
-        for ps in &paths {
-            for p in ps {
-                let part = face.green(p)?;
-                for i in 0..NM {
-                    total[i] += part[i];
-                }
-            }
-        }
-        if !bounded && face.s0.not_mirrored() {
-            if let Some(per) = periods[1] {
-                let mut turns = Vec::new();
-                for x in singular.iter().filter(|x| x.axis == 1) {
-                    turns.push(round9(pymod(x.val, per)?));
-                }
-                if sorted_set(turns).len() > 1 {
-                    // bounded by points alone, on a surface whose closed profile meets its axis
-                    // twice: the face could be either part of the profile turned
-                    return unsupported(
-                        "a face bounded by points alone, on a surface whose closed profile \
-                         meets its axis twice: which part of it is the face is not said",
-                    );
-                }
-            }
-        }
-        let sigma = (if face.ss { 1.0 } else { -1.0 }) * (if transposed { -1.0 } else { 1.0 });
-        let tau = if transposed { -1.0 } else { 1.0 };
-        // the face as the standard reads its loops (by its own normal, sigma), and, where that
-        // differs, as a writer who directs them by the surface's normal would mean it (tau)
-        let standard = face.settle(&total, sigma, sigma, false)?;
-        let other = if tau != sigma {
-            Some(face.settle(&total, tau, sigma, false)?)
+        Ok((face, paths, transposed))
+    }
+
+    /// Where what the face's loops leave open is made up in whole turns of its surface: the
+    /// top of the inner integral. Only a periodic inner parameter, or a singular line across it,
+    /// leaves a face's loops open: else every side of the face is an edge of it.
+    fn turn(&self) -> Option<f64> {
+        let periods = self.s.periods();
+        periods[0]?;
+        let top = match (self.top, periods[1]) {
+            (Some(top), _) => top,
+            (None, Some(per)) => self.vref + per,
+            (None, None) => return None,
+        };
+        if top - self.vref != 0.0 {
+            Some(top)
         } else {
             None
-        };
-        // and, where a loop along a seam runs against the standard, as its writer means it: the
-        // region the loop unwraps to, which the seam is in
-        let seamed = if face.seam {
-            Some(face.settle(&total, sigma, sigma, true)?).filter(|x| *x != standard)
-        } else {
-            None
-        };
-        Ok((standard, other, seamed))
+        }
     }
 
     /// The face's measures from its loops' integrals (`raw`), the loops taken in the sense
     /// `rho`, the face's normal `sigma`; `by_seam`, a loop along a seam taken whichever way it
     /// runs.
     fn settle(&mut self, raw: &Measures, rho: f64, sigma: f64, by_seam: bool) -> R<Settled> {
-        let periods = self.s.periods();
         let mut total = raw.map(|x| rho * x);
         // what the loops leave open on a periodic surface: whole turns of the inner integral
-        if let Some(pu) = periods[0] {
-            // only a periodic inner parameter, or a singular line across it, leaves a face's
-            // loops open: else every side of the face is an edge of it
-            let top = match (self.top, periods[1]) {
-                (Some(top), _) => Some(top),
-                (None, Some(per)) => Some(self.vref + per),
-                (None, None) => None,
-            };
-            if let Some(top) = top {
-                let span_v = top - self.vref;
-                if span_v != 0.0 {
-                    // the whole surface's area in (u, v), signed as its column integral is; the
-                    // face's must come to (0, |full|]
-                    let full = pu * span_v;
-                    let a = full.abs();
-                    let turns = div(total[0], a)? - 1e-12;
-                    let k = -integer(turns, turns.floor())? * (if full > 0.0 { 1.0 } else { -1.0 });
-                    if k > 0.0 && self.seam && by_seam {
-                        // the loop runs against the standard: not the rest of the surface (which
-                        // the seam is not in), but the region it unwraps to
-                        total = total.map(|x| -x);
-                    } else if k != 0.0 {
-                        let column = match self.column {
-                            Some(c) => c,
-                            None => {
-                                let c = self.whole_turn(top)?;
-                                self.column = Some(c);
-                                c
-                            }
-                        };
-                        for i in 0..NM {
-                            total[i] += k * column[i];
-                        }
+        if let Some(top) = self.turn() {
+            // the whole surface's area in (u, v), signed as its column integral is; the
+            // face's must come to (0, |full|]
+            let full = self.s.periods()[0].unwrap() * (top - self.vref);
+            let a = full.abs();
+            let turns = div(total[0], a)? - 1e-12;
+            let k = -integer(turns, turns.floor())? * (if full > 0.0 { 1.0 } else { -1.0 });
+            if k > 0.0 && self.seam && by_seam {
+                // the loop runs against the standard: not the rest of the surface (which
+                // the seam is not in), but the region it unwraps to
+                total = total.map(|x| -x);
+            } else if k != 0.0 {
+                let column = match self.column {
+                    Some(c) => c,
+                    None => {
+                        let c = self.whole_turn(top)?;
+                        self.column = Some(c);
+                        c
                     }
+                };
+                for i in 0..NM {
+                    total[i] += k * column[i];
                 }
             }
         }
@@ -365,9 +452,7 @@ impl<'a> Face<'a> {
             return Ok(Ok([0.0; NM])); // a face of no area (a loop out along an edge and back): nothing
         }
         if total[0] <= 0.0 {
-            return Ok(Err(
-                "a face whose loops bound no region of its surface".into()
-            ));
+            return Ok(Err(UNBOUNDED.into()));
         }
         // the linear measures by the face's outward normal; its areas are positive
         let mut out = total.map(|x| x * sigma);

@@ -36,6 +36,17 @@
 //! against the standard, so that the face is the rest of its surface, which the seam is not in, the
 //! answer also has `by_seam`: the solid with those faces the regions their loops unwrap to.
 //!
+//! A face whose loops, so taken, bound no region of its surface (they run clockwise about its
+//! normal, on a surface they do not close round) is the rest of its surface, which no edge ends:
+//! the file holds no solid, and the answer is {"invalid": why}, as for a loop that is not
+//! closed. That is told from the loops alone, before anything is measured, and only where it is
+//! plain: every sample of the loops' paths lies on the surface where its (u, v) says, and their
+//! area is against the standard by far more than it is in doubt. It is said at once on a line of
+//! its own, which the harness reads where the measure then outlasts its time limit; and it is
+//! the answer too where another face cannot be measured. A face that only its measuring finds
+//! to bound nothing may be one whose edges were not followed on its surface (one that folds onto
+//! itself): of that the answer is still an error, that it cannot be measured.
+//!
 //! Supported: planes, cylinders, cones, spheres, tori (degenerate too), B-spline surfaces
 //! (rational too), surfaces of revolution and of linear extrusion; lines, circles, ellipses,
 //! B-spline curves (rational too), polylines and trimmed curves; MANIFOLD_SOLID_BREP,
@@ -62,7 +73,7 @@ mod step;
 mod surface;
 
 use curve::Frame;
-use face::{Face, Settled};
+use face::{Face, Settled, UNBOUNDED};
 use geom::*;
 use loops::{Loop, face_loops, newell};
 use model::Model;
@@ -208,6 +219,47 @@ struct Found {
     sense: bool,
 }
 
+/// A face's surface and its loops laid on it.
+fn laid(m: &Model, f: &Val, sense: bool, scale: f64) -> R<Found> {
+    let fa = m.one(f)?;
+    let (s, same);
+    if fa.is("ADVANCED_FACE") || fa.is("FACE_SURFACE") {
+        s = m.surface(fa.at(2)?)?;
+        same = !fa.at(3)?.is("F");
+    } else if fa.is("FACE") {
+        // a faceted B-rep's polygon: on the plane its points span
+        let bounds = fa.at(1)?;
+        let la = m.one(m.one(bounds.at(0)?)?.at(1)?)?;
+        let mut pts = Vec::new();
+        for p in la.at(1)?.items()? {
+            pts.push(m.point(p)?);
+        }
+        let z = unit(newell(&pts))?;
+        if pts.len() < 2 {
+            return index_error();
+        }
+        let x = unit(sub(pts[1], pts[0]))?;
+        let x = unit(sub(x, mul(z, dot(x, z))))?;
+        s = Arc::new(Surface::plane(Frame {
+            o: pts[0],
+            x,
+            y: cross(z, x),
+            z,
+        }));
+        same = true;
+    } else {
+        return unsupported(format!("a face {}", fa.named()));
+    }
+    let loops = face_loops(m, f, &s, scale).map_err(|e| of_face(e, f))?;
+    Ok(Found {
+        f: f.clone(),
+        s,
+        loops,
+        same,
+        sense,
+    })
+}
+
 /// The centre of gravity and the inertia tensor about it, of unit density, from a solid's
 /// volume and its first and second moments about `origin` (harness/stl.py's `about_centroid`).
 fn about_centroid(
@@ -346,52 +398,33 @@ fn measure_faces(
 }
 
 /// The mass properties of the solid in a STEP file's text: {volume, area, centroid, inertia
-/// (about the centroid), solids, faces}, lengths in millimetres, or {"error": why}; and, where
-/// it differs, `by_surface`.
-fn measure(text: &[u8], threads: usize) -> R<Json> {
+/// (about the centroid), solids, faces}, lengths in millimetres, or {"error": why}, or
+/// {"invalid": why} where a face's loops plainly bound no region of its surface
+/// (`Face::unbounded`); and, where it differs, `by_surface`. Such a face is told to `unsound` as
+/// soon as it is known, which is before any face is measured: measuring can outlast the time the
+/// harness gives it, or stop at a face it cannot measure, and what the file is must not go unsaid
+/// with it.
+fn measure(text: &[u8], threads: usize, unsound: &mut dyn FnMut(&str)) -> R<Json> {
     let m = Model::new(text)?;
     let (faces, nsolids) = faces_of(&m)?;
     let (mut centre, mut scale) = bounding(&m)?;
-    // each face's loops on its surface first
+    // each face's loops on its surface first. Where a face cannot be laid on its surface, the
+    // file is not measured, and the first such face is why; but the faces after it are still
+    // laid, to be looked at below: one that plainly bounds nothing makes the file no solid,
+    // whatever is not read of another (and so does a loop that is not closed)
     let mut found: Vec<Found> = Vec::with_capacity(faces.len());
+    let mut unread: Option<Err> = None;
     for (f, sense) in &faces {
-        let fa = m.one(f)?;
-        let (s, same);
-        if fa.is("ADVANCED_FACE") || fa.is("FACE_SURFACE") {
-            s = m.surface(fa.at(2)?)?;
-            same = !fa.at(3)?.is("F");
-        } else if fa.is("FACE") {
-            // a faceted B-rep's polygon: on the plane its points span
-            let bounds = fa.at(1)?;
-            let la = m.one(m.one(bounds.at(0)?)?.at(1)?)?;
-            let mut pts = Vec::new();
-            for p in la.at(1)?.items()? {
-                pts.push(m.point(p)?);
-            }
-            let z = unit(newell(&pts))?;
-            if pts.len() < 2 {
-                return index_error();
-            }
-            let x = unit(sub(pts[1], pts[0]))?;
-            let x = unit(sub(x, mul(z, dot(x, z))))?;
-            s = Arc::new(Surface::plane(Frame {
-                o: pts[0],
-                x,
-                y: cross(z, x),
-                z,
-            }));
-            same = true;
-        } else {
-            return unsupported(format!("a face {}", fa.named()));
+        match laid(&m, f, *sense, scale) {
+            Ok(fd) => found.push(fd),
+            Err(e) => match (&unread, &e) {
+                (None, Err::Uncaught(..)) => return Err(e),
+                (None, _) | (Some(Err::Unsupported(_) | Err::Py(..)), Err::Invalid(_)) => {
+                    unread = Some(e)
+                }
+                _ => {}
+            },
         }
-        let loops = face_loops(&m, f, &s, scale).map_err(|e| of_face(e, f))?;
-        found.push(Found {
-            f: f.clone(),
-            s,
-            loops,
-            same,
-            sense: *sense,
-        });
     }
     // the measures about the middle of the solid's own edges, their tolerances by its size: the
     // file's other points (a sphere's centre, a placement's origin) may lie far off a small solid
@@ -416,6 +449,21 @@ fn measure(text: &[u8], threads: usize) -> R<Json> {
     // the solid as the standard reads it, and as a writer who directs a face's loops by its
     // surface's normal would mean it (where any face's normal is against its surface's)
     let against = found.iter().any(|fd| !fd.same);
+    // whether every face's loops bound a region of its surface, from the loops alone: the first
+    // that plainly do not (a face this cannot tell of, or cannot read, is left to be measured)
+    let mut plain: Option<String> = None;
+    for fd in &found {
+        let open = Face::unbounded(fd.s.clone(), fd.loops.clone(), fd.same, centre, scale);
+        if open.unwrap_or(false) {
+            let why = format!("face #{}: {}", fd.f.str(), UNBOUNDED);
+            unsound(&why);
+            plain = Some(why);
+            break;
+        }
+    }
+    if let Some(e) = unread {
+        return Err(e);
+    }
     let mut names = Vec::with_capacity(found.len());
     let mut jobs = Vec::with_capacity(found.len());
     for fd in found {
@@ -455,7 +503,13 @@ fn measure(text: &[u8], threads: usize) -> R<Json> {
         }
     }
     let nfaces = faces.len();
-    let mut out = props(&totals[0], failed[0].as_ref(), centre, nsolids, nfaces);
+    // no solid, where a face's loops plainly bound nothing and measuring it found the same; a
+    // face measuring alone finds so is one whose loops it may not have followed on its surface
+    // (a surface that folds onto itself), and is only not measured
+    let mut out = match (&failed[0], plain) {
+        (Some(_), Some(why)) => vec![("invalid", Json::Str(why))],
+        _ => props(&totals[0], failed[0].as_ref(), centre, nsolids, nfaces),
+    };
     if against {
         out.push((
             "by_surface",
@@ -537,17 +591,31 @@ fn read(path: &str, threads: usize) -> Json {
             );
         }
     };
-    match measure(&newlines(data), threads) {
-        Ok(j) => j,
-        Err(Err::Invalid(why)) => Json::Obj(vec![("invalid", Json::Str(why))]),
-        Err(Err::Unsupported(why)) => Json::Obj(vec![(
+    // said on a line of its own, at once: the answer's last line may never come (the harness
+    // stops a measure that outlasts its limit, and reads what was said before)
+    let mut said: Option<String> = None;
+    let mut unsound = |why: &str| {
+        use std::io::Write;
+        let mut out = String::new();
+        Json::Obj(vec![("invalid", Json::Str(why.into()))]).dump(&mut out);
+        println!("{}", out);
+        let _ = std::io::stdout().flush();
+        said = Some(why.into());
+    };
+    let invalid = |why: String| Json::Obj(vec![("invalid", Json::Str(why))]);
+    match (measure(&newlines(data), threads, &mut unsound), said) {
+        (Ok(j), _) => j,
+        (Err(Err::Invalid(why)), _) => invalid(why),
+        (Err(Err::Uncaught(kind, why)), _) => uncaught(kind, &why),
+        // not measured, for another face's sake: it is no solid all the same
+        (Err(_), Some(why)) => invalid(why),
+        (Err(Err::Unsupported(why)), None) => Json::Obj(vec![(
             "error",
             Json::Str(format!("cannot measure: {}", why)),
         )]),
-        Err(Err::Py(kind, why)) => {
+        (Err(Err::Py(kind, why)), None) => {
             Json::Obj(vec![("error", Json::Str(format!("{}: {}", kind, why)))])
         }
-        Err(Err::Uncaught(kind, why)) => uncaught(kind, &why),
     }
 }
 
@@ -620,7 +688,10 @@ mod tests {
         s += "#50=CLOSED_SHELL('',(#40,#41,#42,#43,#44,#45));\n#51=FACETED_BREP('',#50);\nENDSEC;\nEND-ISO-10303-21;\n";
         for threads in [1, 3] {
             let mut out = String::new();
-            measure(s.as_bytes(), threads).ok().unwrap().dump(&mut out);
+            measure(s.as_bytes(), threads, &mut |_| {})
+                .ok()
+                .unwrap()
+                .dump(&mut out);
             let number = |key: &str| -> f64 {
                 let at = out.find(key).unwrap() + key.len();
                 out[at..]
@@ -643,6 +714,134 @@ mod tests {
                 out
             );
             assert!(out.ends_with("\"solids\": 1, \"faces\": 6}"), "{}", out);
+        }
+    }
+
+    /// A unit cube of advanced faces, each a plane bounded by four lines; with `wound` false, its
+    /// bottom's loop runs the other way round (clockwise about the face's normal).
+    fn a_cube(wound: bool) -> String {
+        let pts = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+        ];
+        let faces = [
+            [0, 3, 2, 1],
+            [4, 5, 6, 7],
+            [0, 1, 5, 4],
+            [1, 2, 6, 5],
+            [2, 3, 7, 6],
+            [3, 0, 4, 7],
+        ];
+        let mut s = String::from("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n");
+        s += "#1=(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.));\n";
+        let triple = |v: V3| format!("({:?},{:?},{:?})", v[0], v[1], v[2]);
+        for (i, p) in pts.iter().enumerate() {
+            s += &format!("#{}=CARTESIAN_POINT('',{});\n", 10 + i, triple(*p));
+            s += &format!("#{}=VERTEX_POINT('',#{});\n", 20 + i, 10 + i);
+        }
+        // an edge from the lower of its two vertices to the higher, once
+        let mut edges: Vec<(usize, usize)> = Vec::new();
+        let mut n = 100;
+        let mut shell = Vec::new();
+        for f in faces {
+            let corners: Vec<V3> = f.iter().map(|&i| pts[i]).collect();
+            let z = unit(newell(&corners)).ok().unwrap();
+            let x = unit(sub(corners[1], corners[0])).ok().unwrap();
+            let mut f = f;
+            if !wound && shell.is_empty() {
+                f.reverse();
+            }
+            let mut oriented = Vec::new();
+            for k in 0..4 {
+                let (a, b) = (f[k], f[(k + 1) % 4]);
+                let (lo, hi) = (a.min(b), a.max(b));
+                let e = match edges.iter().position(|e| *e == (lo, hi)) {
+                    Some(e) => e,
+                    None => {
+                        let d = sub(pts[hi], pts[lo]);
+                        s += &format!("#{}=DIRECTION('',{});\n", n, triple(d));
+                        s += &format!("#{}=VECTOR('',#{},1.);\n", n + 1, n);
+                        s += &format!("#{}=LINE('',#{},#{});\n", n + 2, 10 + lo, n + 1);
+                        s += &format!(
+                            "#{}=EDGE_CURVE('',#{},#{},#{},.T.);\n",
+                            500 + edges.len(),
+                            20 + lo,
+                            20 + hi,
+                            n + 2
+                        );
+                        n += 3;
+                        edges.push((lo, hi));
+                        edges.len() - 1
+                    }
+                };
+                let sense = if a == lo { 'T' } else { 'F' };
+                s += &format!("#{}=ORIENTED_EDGE('',*,*,#{},.{}.);\n", n, 500 + e, sense);
+                oriented.push(format!("#{}", n));
+                n += 1;
+            }
+            s += &format!("#{}=DIRECTION('',{});\n", n, triple(z));
+            s += &format!("#{}=DIRECTION('',{});\n", n + 1, triple(x));
+            s += &format!(
+                "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});\n",
+                n + 2,
+                10 + f[0],
+                n,
+                n + 1
+            );
+            s += &format!("#{}=PLANE('',#{});\n", n + 3, n + 2);
+            s += &format!("#{}=EDGE_LOOP('',({}));\n", n + 4, oriented.join(","));
+            s += &format!("#{}=FACE_OUTER_BOUND('',#{},.T.);\n", n + 5, n + 4);
+            s += &format!(
+                "#{}=ADVANCED_FACE('',(#{}),#{},.T.);\n",
+                n + 6,
+                n + 5,
+                n + 3
+            );
+            shell.push(format!("#{}", n + 6));
+            n += 7;
+        }
+        s += &format!("#900=CLOSED_SHELL('',({}));\n", shell.join(","));
+        s + "#901=MANIFOLD_SOLID_BREP('',#900);\nENDSEC;\nEND-ISO-10303-21;\n"
+    }
+
+    /// A cube is measured, and nothing is said of it before; with one face's loop wound the
+    /// other way (as some writers wind them, and many readers put right in silence), the face is
+    /// the rest of its plane, the file holds no solid, and that is said before any face is
+    /// measured: the harness reads it even if the measure never ends.
+    #[test]
+    fn a_loop_wound_against_its_face_is_no_solid() {
+        let mut said = Vec::new();
+        let mut out = String::new();
+        measure(a_cube(true).as_bytes(), 1, &mut |why| {
+            said.push(why.to_string())
+        })
+        .ok()
+        .unwrap()
+        .dump(&mut out);
+        assert!(said.is_empty(), "{:?}", said);
+        let number = |key: &str| -> f64 {
+            let at = out.find(key).unwrap() + key.len();
+            out[at..].split(',').next().unwrap().trim().parse().unwrap()
+        };
+        assert!((number("\"volume\": ") - 1.0).abs() < 1e-12, "{}", out);
+        assert!((number("\"area\": ") - 6.0).abs() < 1e-12, "{}", out);
+        for threads in [1, 3] {
+            let (mut said, mut out) = (Vec::new(), String::new());
+            measure(a_cube(false).as_bytes(), threads, &mut |why| {
+                said.push(why.to_string())
+            })
+            .ok()
+            .unwrap()
+            .dump(&mut out);
+            let why = format!("face #122: {}", UNBOUNDED);
+            assert_eq!(said, [why.clone()]);
+            assert_eq!(out, format!("{{\"invalid\": \"{}\"}}", why));
         }
     }
 
@@ -703,7 +902,10 @@ mod tests {
             .join("\n")
         );
         let mut out = String::new();
-        measure(s.as_bytes(), 1).ok().unwrap().dump(&mut out);
+        measure(s.as_bytes(), 1, &mut |_| {})
+            .ok()
+            .unwrap()
+            .dump(&mut out);
         let seamed = &out[out.find("\"by_seam\"").unwrap()..];
         let number = |key: &str| -> f64 {
             let at = seamed.find(key).unwrap() + key.len();
@@ -786,7 +988,10 @@ mod tests {
             .join("\n")
         );
         let mut out = String::new();
-        measure(s.as_bytes(), 1).ok().unwrap().dump(&mut out);
+        measure(s.as_bytes(), 1, &mut |_| {})
+            .ok()
+            .unwrap()
+            .dump(&mut out);
         let number = |key: &str| -> f64 {
             let at = out.find(key).unwrap() + key.len();
             out[at..].split(',').next().unwrap().trim().parse().unwrap()

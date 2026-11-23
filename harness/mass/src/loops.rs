@@ -19,6 +19,7 @@ pub fn nearest(x: f64, r: f64, period: Option<f64>) -> R<f64> {
 /// A piece of a loop on the (u, v) plane: along an edge's curve from t0 to t1, its points
 /// inverted onto the surface and followed continuously from a reference path, or straight from
 /// one point to another (`line`), along a singular line.
+#[derive(Clone)]
 pub struct Path {
     pub c: Option<Arc<Curve>>,
     pub t0: f64,
