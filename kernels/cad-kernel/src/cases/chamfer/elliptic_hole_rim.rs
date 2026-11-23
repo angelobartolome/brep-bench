@@ -4,25 +4,17 @@
 //! chamfer is a countersink of constant slope 45° between the ellipse at z = 3 on the wall and the
 //! ellipse's outer parallel curve at distance 1 on the top; the rim on the bottom stays sharp.
 //!
-//! Refused, by the kernel: "`wall` (extrusion) has no offset read yet, so no ball rolls on it:
-//! planes, cylinders, cones, spheres, tori and B-spline sheets are rounded". cad-kernel's chamfer
-//! of a solid's edge, `fillet::flat_along`, reads each leg where one face meets the other face's
-//! surface offset by the leg, and a profile has no ellipse, so the drill is the rational B-spline
-//! ellipse swept by `prism` and the hole's wall an extrusion, whose offset the kernel does not
-//! read. Drilled by a B-spline sheet instead (the ellipse's net carried up, sewn to its ends) it is
-//! refused all the same, as "the flat of `near` with `wall` is wider than a face holds":
-//! `flat_along`'s leg is read by `Surface::offset`, which has an offset in closed form for a plane,
-//! a cylinder, a cone, a sphere and a torus only, none for a sheet. `build::drafted` and
-//! `build::offset`, which would make the countersink as a drill drafted 45°, refuse a spline.
+//! The drill's section is the ellipse itself, exactly (`Curve::Ellipse` in a profile), so the
+//! hole's wall is the ellipse swept up (`Surface::Extrusion`), closed round it.
+//! `fillet::flat_along` cuts the flat between the two legs: on the top, where it stands 1 from the
+//! wall (the wall's offset is the ellipse's spline carried along the sweep, read by its signed
+//! distance); down the wall, where it stands 1 below the top's plane.
 use crate::sketch::block;
 use cad_kernel::boolean::{combined, Op};
 use cad_kernel::build::{prism, Profile, ProfileEdge};
 use cad_kernel::fillet::flat_along;
-use cad_kernel::geom::tolerance;
-use cad_kernel::nurbs::BSpline;
+use cad_kernel::geom::{tolerance, Curve, Frame};
 use cad_kernel::topo::Brep;
-use std::f64::consts::FRAC_1_SQRT_2;
-use std::sync::Arc;
 
 const A: f64 = 6.;
 const B: f64 = 3.;
@@ -31,23 +23,14 @@ const DISTANCE: f64 = 1.;
 
 pub fn build() -> Result<Brep, String> {
     let plate = block([-15., -10., 0.], [15., 10., THICKNESS])?;
-    // a profile has no ellipse: the hole's outline as a closed rational quadratic B-spline, four
-    // quarters each on the corner of the box round it, weighted √2/2, at z = −1
-    let at = |x: f64, y: f64| [A * x, B * y, -1.];
-    let poles = vec![at(1., 0.), at(1., 1.), at(0., 1.), at(-1., 1.), at(-1., 0.), at(-1., -1.),
-                     at(0., -1.), at(1., -1.), at(1., 0.)];
-    let h = FRAC_1_SQRT_2;
-    let knots = vec![0., 0., 0., 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1., 1., 1.];
-    let outline = BSpline::rational(2, knots, poles, vec![1., h, 1., h, 1., h, 1., h, 1.])?;
-    let section = Profile { origin: [0., 0., -1.], normal: [0., 0., 1.],
-                            loops: vec![vec![ProfileEdge::Spline(Arc::new(outline))]],
+    // the hole's outline at z = −1: the drill runs past both faces, from z = −1 to z = 5
+    let below = Frame { o: [0., 0., -1.], ..Frame::WORLD };
+    let section = Profile { origin: below.o, normal: [0., 0., 1.],
+                            loops: vec![vec![ProfileEdge::Exact(Curve::Ellipse(below, A, B))]],
                             names: vec![vec!["wall".into()]] };
-    // the drill runs past both faces, from z = −1 to z = 5
     let drill = prism(&section, 0., THICKNESS + 2.)?;
     let drilled = combined(&plate, &drill, Op::Cut, 0.)?;
-    // the top rim picked by a point on it; the kernel would cut the flat between the leg 1 out
-    // across the top (where it stands 1 from the wall's surface: the parallel curve) and the leg 1
-    // down the wall (1 from the top's plane)
+    // the top rim picked by a point on it
     let piece = flat_along(&drilled, [0., B, THICKNESS], [DISTANCE, DISTANCE], None,
                            tolerance(drilled.size()))?;
     // the rim is convex (the plate's material lies in the wedge between the top and the wall): its
