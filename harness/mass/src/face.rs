@@ -39,6 +39,10 @@ pub struct Face<'a> {
 const NOT_CONVERGING: &str =
     "the integral round a loop does not converge (a surface that folds or cusps there?)";
 
+/// Why a face is no face, as the standard reads its loops: they run clockwise about its normal,
+/// on a surface they do not close round.
+pub const UNBOUNDED: &str = "a face whose loops bound no region of its surface";
+
 fn bisect_right(a: &[f64], x: f64) -> usize {
     let (mut lo, mut hi) = (0, a.len());
     while lo < hi {
@@ -98,182 +102,18 @@ impl<'a> Face<'a> {
     /// directs them by the surface's normal would mean it.
     pub fn measure(
         s0: Arc<Surface>,
-        mut loops: Vec<Loop>,
+        loops: Vec<Loop>,
         same_sense: bool,
         centre: V3,
         scale: f64,
         index: usize,
         failed: &'a AtomicUsize,
     ) -> R<(Settled, Option<Settled>, Option<Settled>)> {
-        // the inner integral runs along the parameter no loop winds round; where none winds, along
-        // the one whose ends are poles (a sphere's or a revolution's meridian), else v
-        let poles = s0.singular();
-        // free to choose: along the parameter of the surface's poles, else the one of fewer knot
-        // spans (each a panel of the inner integral at every point of the outer)
-        let spans = s0.spans();
-        let prefer_u = (!poles.is_empty() && poles.iter().all(|x| x.axis == 0))
-            || (poles.is_empty() && spans[0] < spans[1]);
-        let no_u = loops.iter().all(|(_, w)| w.0 == 0.0);
-        let no_v = loops.iter().all(|(_, w)| w.1 == 0.0);
-        let transposed = if no_v && !(prefer_u && no_u) {
-            false
-        } else if no_u {
-            for (ps, _) in &mut loops {
-                for p in ps {
-                    p.transpose();
-                }
-            }
-            true
-        } else {
-            return unsupported("a face whose loops wind round both of its surface's periods");
-        };
-        let s = View {
-            s: s0.clone(),
-            transposed,
-        };
-        let paths: Vec<Vec<Path>> = loops.into_iter().map(|(ps, _)| ps).collect();
-        // a seam: an edge run both ways in one loop, its two runs apart (a turn apart) in (u, v)
-        let seam = paths.iter().any(|ps| {
-            ps.iter().enumerate().any(|(i, p)| {
-                ps[i + 1..].iter().any(|q| match (&p.c, &q.c) {
-                    (Some(a), Some(b)) => {
-                        let (x, y) = (p.start(), q.end());
-                        Arc::ptr_eq(a, b)
-                            && (p.t0, p.t1) == (q.t1, q.t0)
-                            && (x.0 - y.0).abs() + (x.1 - y.1).abs() > 1e-7
-                    }
-                    _ => false,
-                })
-            })
-        });
+        let (mut face, paths) = Face::laid(s0, loops, same_sense, centre, scale, index, failed)?;
+        let transposed = face.s.transposed;
         let bounded = !paths.is_empty();
-        let periods = s.periods();
-        let domain = s.domain();
-        // the inner integral's start: a singular line of the inner parameter, where H is zero, or
-        // else where the face is
-        // its poles: lines across the inner parameter (and their turns, where it is periodic)
-        let singular = s.singular();
-        let mut sing: Vec<f64> = singular
-            .iter()
-            .filter(|x| x.axis == 1)
-            .map(|x| x.val)
-            .collect();
-        if let Some(per) = periods[1] {
-            for v in sing.clone() {
-                for k in -2..3 {
-                    sing.push(v + k as f64 * per);
-                }
-            }
-        }
-        let sing = sorted_set(sing);
-        // a point of the face's boundary, away from any pole
-        let first = paths
-            .iter()
-            .flatten()
-            .find(|p| p.line.is_none())
-            .map(|p| p.rf[p.rf.len() / 2].1)
-            .unwrap_or((0.0, 0.0));
-        let eps = 1e-12 * (1.0 + first.1.abs());
-        let below: Vec<f64> = sing
-            .iter()
-            .copied()
-            .filter(|x| *x < first.1 - eps)
-            .collect();
-        let above: Vec<f64> = sing
-            .iter()
-            .copied()
-            .filter(|x| *x > first.1 + eps)
-            .collect();
-        // the inner integral from the pole below the face (H is zero along it), to the pole above
-        let vref;
-        if !bounded && sing.len() > 1 {
-            // bounded by points alone (a whole sphere): from one pole to the next
-            // (on a closed profile, the half from its start, as it was drawn)
-            let lo0 = if domain[1].0.is_finite() {
-                domain[1].0
-            } else {
-                0.0
-            };
-            vref = if periods[1].is_none() {
-                sing[0]
-            } else {
-                let mut best: Option<f64> = None;
-                for x in sing.iter().copied().filter(|x| *x <= lo0 + 1e-12) {
-                    best = Some(match best {
-                        Some(b) => pymax(b, x),
-                        None => x,
-                    });
-                }
-                best.unwrap_or(sing[0])
-            };
-        } else {
-            // a pole a loop runs through, where H is zero: near a pole the angle along it is only
-            // as good as inversion makes it, and its derivative there is noise, which H must
-            // cancel (from the other pole, H there is a whole column, and the noise counts)
-            let through: Vec<f64> = sing
-                .iter()
-                .copied()
-                .filter(|x| {
-                    paths.iter().flatten().any(|p| {
-                        let close = |q: Uv| (q.1 - x).abs() <= 1e-9 * (1.0 + x.abs());
-                        close(p.start()) || close(p.end())
-                    })
-                })
-                .collect();
-            // else the pole nearer the face, so that a small face by a pole is not the difference
-            // of the whole surface and most of it
-            let (nb, na) = if through.is_empty() {
-                (below.clone(), above.clone())
-            } else {
-                let b: Vec<f64> = through
-                    .iter()
-                    .copied()
-                    .filter(|x| *x < first.1 - eps)
-                    .collect();
-                let a: Vec<f64> = through
-                    .iter()
-                    .copied()
-                    .filter(|x| *x > first.1 + eps)
-                    .collect();
-                (b, a)
-            };
-            let near = match (nb.last(), na.first()) {
-                (Some(b), Some(a)) => Some(if (a - first.1).abs() < (b - first.1).abs() {
-                    *a
-                } else {
-                    *b
-                }),
-                (Some(b), None) => Some(*b),
-                (None, Some(a)) => Some(*a),
-                (None, None) => None,
-            };
-            vref = near.unwrap_or(first.1);
-        }
-        let top = if bounded && !below.is_empty() && above.first().is_some_and(|a| *a == vref) {
-            // the top: the pole on the face's other side (below it)
-            below.last().copied()
-        } else {
-            sing.iter().copied().find(|x| *x > vref + eps)
-        };
-        let mut face = Face {
-            index,
-            failed,
-            s0,
-            ss: same_sense,
-            c: centre,
-            l: scale,
-            s,
-            vref,
-            top,
-            seam,
-            cuts: Vec::new(),
-            whole: Vec::new(),
-            column: None,
-            nodes: Vec::new(),
-            weights: Vec::new(),
-            points: Vec::new(),
-        };
-        face.layout(&singular);
+        let periods = face.s.periods();
+        let singular = face.s.singular();
         let mut total = [0.0; NM];
         for ps in &paths {
             for p in ps {
@@ -299,8 +139,8 @@ impl<'a> Face<'a> {
                 }
             }
         }
-        let sigma = (if face.ss { 1.0 } else { -1.0 }) * (if transposed { -1.0 } else { 1.0 });
-        let tau = if transposed { -1.0 } else { 1.0 };
+        let sigma = sense(face.ss, transposed);
+        let tau = sense(true, transposed);
         // the face as the standard reads its loops (by its own normal, sigma), and, where that
         // differs, as a writer who directs them by the surface's normal would mean it (tau)
         let standard = face.settle(&total, sigma, sigma, false)?;
@@ -319,47 +159,147 @@ impl<'a> Face<'a> {
         Ok((standard, other, seamed))
     }
 
+    /// Whether the face's loops, as the standard reads them, plainly bound no region of its
+    /// surface (`UNBOUNDED`): what `measure` would find of it, told from the loops alone, by the
+    /// area in (u, v) of the polygons through their paths' samples, -∮ (v - v_ref) du. It takes
+    /// no integral and sets nothing up to take one, so it is known of every face at once (the
+    /// module's own comment says why that is wanted). The polygons' area is taken twice, through
+    /// every sample and through every other one, and the two extrapolated (the area is off as
+    /// the square of the samples' spacing); the face is said to bound nothing only where its
+    /// area is against the standard by far more than the two differ, and every sample lies on
+    /// the surface where its (u, v) says. Any other face is left to `measure`.
+    pub fn unbounded(s0: &Arc<Surface>, loops: &[Loop], same_sense: bool, scale: f64) -> R<bool> {
+        let (s, vref, top) = lie(s0, loops)?;
+        if turn(&s, vref, top).is_some() {
+            // what its loops leave open is made up in whole turns of the surface (`settle`):
+            // its area comes to more than nothing whichever way they run
+            return Ok(false);
+        }
+        let at = |q: Uv| if s.transposed { (q.1, q.0) } else { q };
+        let strip = |a: Uv, b: Uv| -((a.1 + b.1) / 2.0 - vref) * (b.0 - a.0);
+        // (the area, and its pieces each taken as positive: the size it is held against)
+        let (mut fine, mut coarse, mut gross) = (0.0, 0.0, 0.0);
+        let mut along: Vec<Uv> = Vec::new();
+        for p in loops.iter().flat_map(|(ps, _)| ps) {
+            along.clear();
+            along.extend(p.points().map(at));
+            for w in along.windows(2) {
+                fine += strip(w[0], w[1]);
+                gross += strip(w[0], w[1]).abs();
+            }
+            let last = along.len().saturating_sub(1);
+            let mut k = 0;
+            while k < last {
+                let next = (k + 2).min(last);
+                coarse += strip(along[k], along[next]);
+                k = next;
+            }
+        }
+        let area = fine + (fine - coarse) / 3.0;
+        // (and by more than `settle` takes for a face of no area)
+        if !(sense(same_sense, s.transposed) * area < -(4.0 * (fine - coarse).abs() + 1e-6 * gross)
+            && area.abs() > 1e-9 * pymax(1.0, scale * scale))
+        {
+            return Ok(false);
+        }
+        // a path that is not where its edge is tells nothing: looked at last, since it takes the
+        // surface and the curve at every sample, and nearly every face has been let go by now
+        for p in loops.iter().flat_map(|(ps, _)| ps) {
+            let Some(c) = &p.c else { continue };
+            for (t, uv) in &p.rf {
+                if norm(sub(s0.ev(uv.0, uv.1)?.0, c.point(*t)?)) > 1e-6 * scale {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// The face set up to be integrated over, and its loops' paths on the (u, v) plane the
+    /// inner integral runs along v of (`lie`).
+    fn laid(
+        s0: Arc<Surface>,
+        mut loops: Vec<Loop>,
+        same_sense: bool,
+        centre: V3,
+        scale: f64,
+        index: usize,
+        failed: &'a AtomicUsize,
+    ) -> R<(Face<'a>, Vec<Vec<Path>>)> {
+        let (s, vref, top) = lie(&s0, &loops)?;
+        if s.transposed {
+            for (ps, _) in &mut loops {
+                for p in ps {
+                    p.transpose();
+                }
+            }
+        }
+        let paths: Vec<Vec<Path>> = loops.into_iter().map(|(ps, _)| ps).collect();
+        // a seam: an edge run both ways in one loop, its two runs apart (a turn apart) in (u, v)
+        let seam = paths.iter().any(|ps| {
+            ps.iter().enumerate().any(|(i, p)| {
+                ps[i + 1..].iter().any(|q| match (&p.c, &q.c) {
+                    (Some(a), Some(b)) => {
+                        let (x, y) = (p.start(), q.end());
+                        Arc::ptr_eq(a, b)
+                            && (p.t0, p.t1) == (q.t1, q.t0)
+                            && (x.0 - y.0).abs() + (x.1 - y.1).abs() > 1e-7
+                    }
+                    _ => false,
+                })
+            })
+        });
+        let singular = s.singular();
+        let mut face = Face {
+            index,
+            failed,
+            s0,
+            ss: same_sense,
+            c: centre,
+            l: scale,
+            s,
+            vref,
+            top,
+            seam,
+            cuts: Vec::new(),
+            whole: Vec::new(),
+            column: None,
+            nodes: Vec::new(),
+            weights: Vec::new(),
+            points: Vec::new(),
+        };
+        face.layout(&singular);
+        Ok((face, paths))
+    }
+
     /// The face's measures from its loops' integrals (`raw`), the loops taken in the sense
     /// `rho`, the face's normal `sigma`; `by_seam`, a loop along a seam taken whichever way it
     /// runs.
     fn settle(&mut self, raw: &Measures, rho: f64, sigma: f64, by_seam: bool) -> R<Settled> {
-        let periods = self.s.periods();
         let mut total = raw.map(|x| rho * x);
         // what the loops leave open on a periodic surface: whole turns of the inner integral
-        if let Some(pu) = periods[0] {
-            // only a periodic inner parameter, or a singular line across it, leaves a face's
-            // loops open: else every side of the face is an edge of it
-            let top = match (self.top, periods[1]) {
-                (Some(top), _) => Some(top),
-                (None, Some(per)) => Some(self.vref + per),
-                (None, None) => None,
-            };
-            if let Some(top) = top {
-                let span_v = top - self.vref;
-                if span_v != 0.0 {
-                    // the whole surface's area in (u, v), signed as its column integral is; the
-                    // face's must come to (0, |full|]
-                    let full = pu * span_v;
-                    let a = full.abs();
-                    let turns = div(total[0], a)? - 1e-12;
-                    let k = -integer(turns, turns.floor())? * (if full > 0.0 { 1.0 } else { -1.0 });
-                    if k > 0.0 && self.seam && by_seam {
-                        // the loop runs against the standard: not the rest of the surface (which
-                        // the seam is not in), but the region it unwraps to
-                        total = total.map(|x| -x);
-                    } else if k != 0.0 {
-                        let column = match self.column {
-                            Some(c) => c,
-                            None => {
-                                let c = self.whole_turn(top)?;
-                                self.column = Some(c);
-                                c
-                            }
-                        };
-                        for i in 0..NM {
-                            total[i] += k * column[i];
-                        }
+        if let Some(top) = turn(&self.s, self.vref, self.top) {
+            // the whole surface's area in (u, v), signed as its column integral is; the
+            // face's must come to (0, |full|]
+            let full = self.s.periods()[0].unwrap() * (top - self.vref);
+            let a = full.abs();
+            let turns = div(total[0], a)? - 1e-12;
+            let k = -integer(turns, turns.floor())? * (if full > 0.0 { 1.0 } else { -1.0 });
+            if k > 0.0 && self.seam && by_seam {
+                // the loop runs against the standard: not the rest of the surface (which
+                // the seam is not in), but the region it unwraps to
+                total = total.map(|x| -x);
+            } else if k != 0.0 {
+                let column = match self.column {
+                    Some(c) => c,
+                    None => {
+                        let c = self.whole_turn(top)?;
+                        self.column = Some(c);
+                        c
                     }
+                };
+                for i in 0..NM {
+                    total[i] += k * column[i];
                 }
             }
         }
@@ -368,9 +308,7 @@ impl<'a> Face<'a> {
             return Ok(Ok([0.0; NM])); // a face of no area (a loop out along an edge and back): nothing
         }
         if total[0] <= 0.0 {
-            return Ok(Err(
-                "a face whose loops bound no region of its surface".into()
-            ));
+            return Ok(Err(UNBOUNDED.into()));
         }
         // the linear measures by the face's outward normal; its areas are positive
         let mut out = total.map(|x| x * sigma);
@@ -791,10 +729,7 @@ impl<'a> Face<'a> {
     /// -∫ H(u(t), v(t)) u'(t) dt along a path: nothing along a line of constant u (a seam, a
     /// meridian, a B-spline face's own boundary), where du is nothing.
     fn green(&mut self, path: &Path) -> R<Measures> {
-        let us: Vec<f64> = match path.line {
-            Some((a, b)) => vec![a.0, b.0],
-            None => path.rf.iter().map(|(_, uv)| uv.0).collect(),
-        };
+        let us: Vec<f64> = path.points().map(|uv| uv.0).collect();
         let (mut hi, mut lo, mut big) = (us[0], us[0], us[0].abs());
         for &x in &us[1..] {
             hi = pymax(hi, x);
@@ -892,4 +827,164 @@ impl<'a> Face<'a> {
         }
         Ok(out)
     }
+}
+
+/// Where a face lies on its surface for the integral over it: the surface seen so that the inner
+/// integral runs along v (its own (u, v), or the two swapped), where that integral starts
+/// (v_ref) and the pole it runs to, if any. From the loops as `face_loops` laid them, which
+/// are not changed.
+fn lie(s0: &Arc<Surface>, loops: &[Loop]) -> R<(View, f64, Option<f64>)> {
+    // the inner integral runs along the parameter no loop winds round; where none winds, along
+    // the one whose ends are poles (a sphere's or a revolution's meridian), else v
+    let poles = s0.singular();
+    // free to choose: along the parameter of the surface's poles, else the one of fewer knot
+    // spans (each a panel of the inner integral at every point of the outer)
+    let spans = s0.spans();
+    let prefer_u = (!poles.is_empty() && poles.iter().all(|x| x.axis == 0))
+        || (poles.is_empty() && spans[0] < spans[1]);
+    let no_u = loops.iter().all(|(_, w)| w.0 == 0.0);
+    let no_v = loops.iter().all(|(_, w)| w.1 == 0.0);
+    let transposed = if no_v && !(prefer_u && no_u) {
+        false
+    } else if no_u {
+        true
+    } else {
+        return unsupported("a face whose loops wind round both of its surface's periods");
+    };
+    let s = View {
+        s: s0.clone(),
+        transposed,
+    };
+    // the loops' paths as they lie on that plane: the surface's own, or with u and v swapped
+    let at = |q: Uv| if transposed { (q.1, q.0) } else { q };
+    let paths = || loops.iter().flat_map(|(ps, _)| ps);
+    let bounded = !loops.is_empty();
+    let periods = s.periods();
+    let domain = s.domain();
+    // the inner integral's start: a singular line of the inner parameter, where H is zero, or
+    // else where the face is
+    // its poles: lines across the inner parameter (and their turns, where it is periodic)
+    let singular = s.singular();
+    let mut sing: Vec<f64> = singular
+        .iter()
+        .filter(|x| x.axis == 1)
+        .map(|x| x.val)
+        .collect();
+    if let Some(per) = periods[1] {
+        for v in sing.clone() {
+            for k in -2..3 {
+                sing.push(v + k as f64 * per);
+            }
+        }
+    }
+    let sing = sorted_set(sing);
+    // a point of the face's boundary, away from any pole
+    let first = paths()
+        .find(|p| p.line.is_none())
+        .map(|p| at(p.rf[p.rf.len() / 2].1))
+        .unwrap_or((0.0, 0.0));
+    let eps = 1e-12 * (1.0 + first.1.abs());
+    let below: Vec<f64> = sing
+        .iter()
+        .copied()
+        .filter(|x| *x < first.1 - eps)
+        .collect();
+    let above: Vec<f64> = sing
+        .iter()
+        .copied()
+        .filter(|x| *x > first.1 + eps)
+        .collect();
+    // the inner integral from the pole below the face (H is zero along it), to the pole above
+    let vref;
+    if !bounded && sing.len() > 1 {
+        // bounded by points alone (a whole sphere): from one pole to the next
+        // (on a closed profile, the half from its start, as it was drawn)
+        let lo0 = if domain[1].0.is_finite() {
+            domain[1].0
+        } else {
+            0.0
+        };
+        vref = if periods[1].is_none() {
+            sing[0]
+        } else {
+            let mut best: Option<f64> = None;
+            for x in sing.iter().copied().filter(|x| *x <= lo0 + 1e-12) {
+                best = Some(match best {
+                    Some(b) => pymax(b, x),
+                    None => x,
+                });
+            }
+            best.unwrap_or(sing[0])
+        };
+    } else {
+        // a pole a loop runs through, where H is zero: near a pole the angle along it is only
+        // as good as inversion makes it, and its derivative there is noise, which H must
+        // cancel (from the other pole, H there is a whole column, and the noise counts)
+        let through: Vec<f64> = sing
+            .iter()
+            .copied()
+            .filter(|x| {
+                paths().any(|p| {
+                    let close = |q: Uv| (q.1 - x).abs() <= 1e-9 * (1.0 + x.abs());
+                    close(at(p.start())) || close(at(p.end()))
+                })
+            })
+            .collect();
+        // else the pole nearer the face, so that a small face by a pole is not the difference
+        // of the whole surface and most of it
+        let (nb, na) = if through.is_empty() {
+            (below.clone(), above.clone())
+        } else {
+            let b: Vec<f64> = through
+                .iter()
+                .copied()
+                .filter(|x| *x < first.1 - eps)
+                .collect();
+            let a: Vec<f64> = through
+                .iter()
+                .copied()
+                .filter(|x| *x > first.1 + eps)
+                .collect();
+            (b, a)
+        };
+        let near = match (nb.last(), na.first()) {
+            (Some(b), Some(a)) => Some(if (a - first.1).abs() < (b - first.1).abs() {
+                *a
+            } else {
+                *b
+            }),
+            (Some(b), None) => Some(*b),
+            (None, Some(a)) => Some(*a),
+            (None, None) => None,
+        };
+        vref = near.unwrap_or(first.1);
+    }
+    let top = if bounded && !below.is_empty() && above.first().is_some_and(|a| *a == vref) {
+        // the top: the pole on the face's other side (below it)
+        below.last().copied()
+    } else {
+        sing.iter().copied().find(|x| *x > vref + eps)
+    };
+    Ok((s, vref, top))
+}
+
+/// Where what a face's loops leave open is made up in whole turns of its surface (`lie`'s
+/// view of it, v_ref and top): the top of the inner integral. Only a periodic inner parameter, or
+/// a singular line across it, leaves a face's loops open: else every side of the face is an edge
+/// of it.
+fn turn(s: &View, vref: f64, top: Option<f64>) -> Option<f64> {
+    let periods = s.periods();
+    periods[0]?;
+    let top = match (top, periods[1]) {
+        (Some(top), _) => top,
+        (None, Some(per)) => vref + per,
+        (None, None) => return None,
+    };
+    if top - vref != 0.0 { Some(top) } else { None }
+}
+
+/// The sense a face's loops run in on the (u, v) plane of `lie`, as its normal sees them: its
+/// surface's turned by `same_sense`, and by the swap of u and v.
+fn sense(same_sense: bool, transposed: bool) -> f64 {
+    (if same_sense { 1.0 } else { -1.0 }) * (if transposed { -1.0 } else { 1.0 })
 }

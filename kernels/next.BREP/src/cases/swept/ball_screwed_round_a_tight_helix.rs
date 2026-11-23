@@ -14,11 +14,13 @@
 //! near each end, just past z = 0 and 6, that the cut discs and the balls do not reach: sampled, one
 //! band point in 400000; built, it moves the volume by 5e-9 and the area by 8e-7 of the solid's.
 //! Each eighth of the two turns of cut discs is lofted through their exact sections at 33 points of
-//! it; the eight lofts, the balls and the cylinder are united.
+//! it; the eight lofts, the balls and the cylinder are united. Where the kernel's sweep of the ball
+//! builds the solid itself (its tube and end balls, trimmed where the arc's own distance says), that
+//! is the answer instead.
 use crate::solids::p;
-use crate::solids::swept::{planar, Piece};
+use crate::solids::swept::{planar, revolved_tool, turn_about_z, Piece};
 use crate::Refusal;
-use brep_kernel::{boolean_operation_nary, loft_profile_brep, make_cylinder_brep, make_sphere_brep, BooleanOperation, BrepSolid, NurbsCurve};
+use brep_kernel::{boolean_operation_nary, loft_profile_brep, make_cylinder_brep, make_sphere_brep, sweep_solid, BooleanOperation, BrepSolid, NurbsCurve};
 use std::f64::consts::{PI, TAU};
 
 const RADIUS: f64 = 1.5;
@@ -26,6 +28,15 @@ const BALL: f64 = 2.0;
 const CUT: f64 = 1.6;
 
 pub fn build() -> Result<BrepSolid, Refusal> {
+    // The kernel's sweep of the ball itself, where it builds the screwed ball past its fold (its
+    // tube and end balls, trimmed where the arc's own distance says); the union below otherwise.
+    let ball = revolved_tool(p(RADIUS, 0.0, -BALL), p(0.0, 0.0, 1.0), p(1.0, 0.0, 0.0), &[
+        Piece::Arc { centre: [0.0, BALL], radius: BALL, start: -PI / 2.0, end: PI / 2.0 },
+        Piece::Line { from: [0.0, 2.0 * BALL], to: [0.0, 0.0] },
+    ]);
+    if let Ok(solid) = sweep_solid(&ball, &turn_about_z(0.0, 2.0 * TAU, 3.0 / TAU)) {
+        return Ok(solid);
+    }
     let rise = 3.0 / TAU;
     let speed = (RADIUS * RADIUS + rise * rise).sqrt();
     let centre = |t: f64| p(RADIUS * t.cos(), RADIUS * t.sin(), rise * t);

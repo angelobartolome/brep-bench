@@ -4,11 +4,11 @@
 //!
 //! Through the kernel's whole sweep of a solid (`sweep_solid`): the ball, a solid of revolution
 //! whose meridian is the half disc of radius 3, carried along the curve by the frame riding it
-//! (`sweep_solid_along`), and cut from the block.
+//! (`sweep_solid_along`), and cut from the block (`notch_less` where the kernel builds the cut directly).
 use crate::solids::p;
 use crate::solids::swept::{less_all, revolved_tool, Piece};
 use crate::Refusal;
-use brep_kernel::{make_box_brep, sweep_solid_along, BrepSolid, FrameCurve};
+use brep_kernel::{make_box_brep, notch_less, sweep_solid_along, BrepSolid, FrameCurve};
 use std::f64::consts::{FRAC_PI_2};
 
 pub fn build() -> Result<BrepSolid, Refusal> {
@@ -22,5 +22,11 @@ pub fn build() -> Result<BrepSolid, Refusal> {
         control: [p(0.0, 0.0, 0.0), p(10.0, 0.0, 0.0), p(20.0, 20.0, 0.0), p(30.0, 20.0, 0.0)],
         up: z,
     };
-    less_all(block, vec![sweep_solid_along(&ball, &path)?])
+    let swept = sweep_solid_along(&ball, &path)?;
+    // The block less the groove built directly where the kernel does (the sweep crosses only the
+    // block's top face plane); else cut by the boolean.
+    if let Some(body) = notch_less(&block, &swept) {
+        return Ok(body);
+    }
+    less_all(block, vec![swept])
 }

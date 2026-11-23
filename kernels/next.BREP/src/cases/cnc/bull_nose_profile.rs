@@ -47,7 +47,10 @@ pub fn build() -> Result<BrepSolid, Refusal> {
     let valley = |k: usize| at(40.0, 30.0 + 60.0 * (k % 6) as f64);
     // The direction from one centre toward another: where the two arcs touch.
     let toward = |a: [f64; 2], b: [f64; 2]| (b[1] - a[1]).atan2(b[0] - a[0]);
-    for z in [-4.0, -8.0, -10.0] {
+    // The program passes at depths 4, 8 and 10. Each pass's groove rises from its floor to the
+    // cutter's top at its full width, so within the plate the deepest holds every shallower one's:
+    // the plate less it is the plate less all three, made with one cut instead of three.
+    for z in [-10.0] {
         let mut arcs = Vec::new();
         for k in 0..6 {
             // Along the lobe anticlockwise, from its outermost point or where the valley before

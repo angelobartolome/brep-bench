@@ -21,6 +21,7 @@ pub mod fillet;
 pub mod geometry;
 pub mod nurbs;
 pub mod offset;
+pub mod outline;
 pub mod shell;
 pub mod singular;
 pub mod sweep;

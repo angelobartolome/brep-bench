@@ -271,6 +271,13 @@ fn main() -> ExitCode {
         Ok(reply) => reply,
         Err(e) => refused(e),
     };
+    if std::env::var("GEAR_CARRY_CHECK").is_ok() {
+        eprintln!(
+            "gear carry check: {} points read both ways, {} differ",
+            crate::solids::gear::CARRY_CHECKED.load(std::sync::atomic::Ordering::Relaxed),
+            crate::solids::gear::CARRY_MISSED.load(std::sync::atomic::Ordering::Relaxed)
+        );
+    }
     println!("{reply}");
     pause();
     ExitCode::SUCCESS
