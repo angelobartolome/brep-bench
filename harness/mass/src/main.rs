@@ -28,6 +28,17 @@
 //! periodic face's loops leave open (whether a face round a sphere holds the pole) is settled by
 //! the face's area in (u, v), which must be positive and no more than the whole surface's.
 //!
+//! The integral round a loop reads H on those inverted points, and takes the path's rate from
+//! the curve's direction resolved along the surface's two rates S_u and S_v. The two are the same
+//! path only where the surface lets a direction be resolved. Along a fold, where the rates run
+//! together (an envelope's sheets, where a swept body's faces are trimmed), they are not, and
+//! the integral is taken along the inverted points alone, by chords; by a corner where one rate
+//! dies away, or an edge of the surface's domain the curve stands outside, the rate's integral
+//! is mended by how far the two paths part (face.rs, `adaptive`). A point of such a fold that
+//! Newton's method cannot settle on is found by damped steps (surface.rs, `damped`). A loop
+//! whose inverted path breaks between two different points of its surface (an edge laid across
+//! a place where the surface meets itself) is said, as an error.
+//!
 //! A face's loops are taken as ISO 10303-42 directs them: anticlockwise seen from where the face's
 //! normal points, the face's normal its surface's turned by `same_sense`. Where a face's normal is
 //! against its surface's, the answer also has `by_surface`: the solid as it would be with the
@@ -55,9 +66,11 @@
 //! said, as an error.
 //!
 //! It was first written in Python (harness/mass.py, since removed) and then in Rust step for step,
-//! and still gives the Python measurer's answers digit for digit: it keeps Python's floored
-//! remainder, rounding, hypot and printing (py.rs), and sums in the same order. A change that
-//! alters an answer's last digits is a change to how every kernel is measured.
+//! and still gives the Python measurer's answers digit for digit wherever a loop's two paths keep
+//! together (above; they part on about one file in a hundred, which it measured no nearer than
+//! they parted): it keeps Python's floored remainder, rounding, hypot and printing (py.rs), and
+//! sums in the same order. A change that alters an answer's last digits is a change to how every
+//! kernel is measured.
 //!
 //! The faces are measured several at once (`MASS_THREADS`, by default as many as the machine has
 //! cores, eight at most) and summed in the file's order, so the answer does not depend on how

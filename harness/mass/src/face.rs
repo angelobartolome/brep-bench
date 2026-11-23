@@ -36,6 +36,9 @@ pub struct Face<'a> {
     points: Vec<[f64; 6]>,
 }
 
+const NOT_CONVERGING: &str =
+    "the integral round a loop does not converge (a surface that folds or cusps there?)";
+
 /// Why a face is no face, as the standard reads its loops: they run clockwise about its normal,
 /// on a surface they do not close round.
 pub const UNBOUNDED: &str = "a face whose loops bound no region of its surface";
@@ -447,22 +450,48 @@ impl<'a> Face<'a> {
         Ok(self.green(&line)?.map(|x| -x))
     }
 
-    /// The integrand of the integral round a loop at `t` of a path.
-    fn f(&mut self, path: &Path, t: f64, spent: &mut usize) -> R<Measures> {
+    /// One more point of a path's integral, which may take BUDGET of them and no more.
+    fn spend(&mut self, spent: &mut usize) -> R<()> {
         *spent += 1;
         if *spent > BUDGET {
-            return unsupported(
-                "the integral round a loop does not converge (a surface that folds or cusps there?)",
-            );
+            return unsupported(NOT_CONVERGING);
         }
         if self.failed.load(Ordering::Relaxed) < self.index {
             return unsupported("a face before this one could not be measured");
         }
-        let (u, v, du, _) = path.uv(&self.s, t)?;
-        self.h(u, v, -du)
+        Ok(())
+    }
+
+    /// The integrand of the integral round a loop at `t` of a path; and the path's rate du/dt
+    /// there, and how square the surface's rates stand (`Path::uv_square`).
+    fn f(&mut self, path: &Path, t: f64, spent: &mut usize) -> R<(Measures, f64, f64)> {
+        self.spend(spent)?;
+        let (u, v, du, _, square) = path.uv_square(&self.s, t)?;
+        Ok((self.h(u, v, -du)?, du, square))
     }
 
     /// Gauss-Kronrod's estimate over [a, b], halved until it is near enough.
+    ///
+    /// That estimate is of ∫ H u'(t) dt, and u'(t) is the curve's direction resolved along the
+    /// surface's two rates: the rate of the path the curve would trace in (u, v) if it lay in
+    /// the surface. H is read on another path, the curve's points inverted onto the surface,
+    /// which is the one that closes the loop. An edge's curve stands a writer's tolerance off
+    /// its surface, and the two paths part by about that; by far more by a corner where one of
+    /// the surface's rates dies away without the surface saying it has a pole, or along an edge
+    /// of its domain that the curve stands just outside. So the estimate, once near enough, is
+    /// made the integral along the inverted path: by how far the two paths part over the panel
+    /// (`parting`), times H, the mean of its values at the panel's ends, where that is more
+    /// than the panel's tolerance; and the panel is halved first where half H's change over
+    /// it, times the parting, which is all the mean can be off by, is more than a sixty-fourth
+    /// of that (a path may be many such panels, and Gauss-Kronrod's rule, once near enough, is
+    /// far nearer than it is asked to be).
+    ///
+    /// Where the surface's rates run together at any of the rule's points (FOLDED: a fold of
+    /// an envelope, which a face may be trimmed along) there is no such estimate to mend. The
+    /// curve's direction resolved along the rates is the quotient of two roundings there, and
+    /// the inverted points land the tolerance over the sine of the rates' angle along the fold
+    /// from where any direction says: the panel is taken by `chords`, which follows the
+    /// inverted path alone.
     fn adaptive(
         &mut self,
         path: &Path,
@@ -475,16 +504,47 @@ impl<'a> Face<'a> {
         let (hw, mid) = ((b - a) / 2.0, (b + a) / 2.0);
         let mut k = [0.0; NM];
         let mut g = [0.0; NM];
+        let (mut went, mut square) = (0.0, 1.0);
         for &(x, wk, wg) in kronrod() {
-            let y = self.f(path, mid + hw * x, spent)?;
+            let (y, du, here) = self.f(path, mid + hw * x, spent)?;
             for i in 0..NM {
                 k[i] += wk * y[i];
                 g[i] += wg * y[i];
             }
+            went += wk * du;
+            square = pymin(square, here);
         }
-        if depth < 24
-            && (0..NM).any(|i| (hw * (k[i] - g[i])).abs() > tol[i] + 1e-12 * (hw * k[i]).abs())
-        {
+        let mut halve = depth < 24
+            && (0..NM).any(|i| (hw * (k[i] - g[i])).abs() > tol[i] + 1e-12 * (hw * k[i]).abs());
+        let mut mend = None;
+        if square < FOLDED {
+            match self.chords(path, a, b, hw * went, tol, spent)? {
+                Some(out) => return Ok(out),
+                None if depth < 48 => halve = true,
+                None => return unsupported(NOT_CONVERGING),
+            }
+        } else if !halve {
+            if let Some((parted, ha, hb)) = self.parting(path, a, b, hw * went, tol, spent)? {
+                halve = (0..NM).any(|i| (0.5 * parted * (hb[i] - ha[i])).abs() > tol[i] / 64.0);
+                if halve && depth >= 48 {
+                    // halved as far as parameters go and still parted: the inverted path
+                    // breaks here. Where its two sides are one point of the surface it is
+                    // joined, as a gap between two paths is (loops.rs, `gap`); else the loop
+                    // is not laid on the surface at all
+                    let (pa, pb) = (self.on(path, a)?, self.on(path, b)?);
+                    let (sa, sb) = (self.s.ev(pa.0, pa.1)?.0, self.s.ev(pb.0, pb.1)?.0);
+                    if norm(sub(sa, sb)) > 1e-5 * self.l {
+                        return unsupported(
+                            "a loop whose path on its surface breaks (an edge laid across a \
+                             place where its surface meets itself?)",
+                        );
+                    }
+                    halve = false;
+                }
+                mend = Some((parted, ha, hb));
+            }
+        }
+        if halve {
             let l = self.adaptive(path, a, mid, depth + 1, tol, spent)?;
             let r = self.adaptive(path, mid, b, depth + 1, tol, spent)?;
             let mut out = [0.0; NM];
@@ -493,7 +553,177 @@ impl<'a> Face<'a> {
             }
             return Ok(out);
         }
-        Ok(k.map(|x| hw * x))
+        let mut out = k.map(|x| hw * x);
+        if let Some((parted, ha, hb)) = mend {
+            for i in 0..NM {
+                out[i] -= 0.5 * (ha[i] + hb[i]) * parted;
+            }
+        }
+        Ok(out)
+    }
+
+    /// How far the path the integrand's rate follows and the path its H is read on part over
+    /// [a, b], and H at the inverted path's two ends there; None where that is too little to
+    /// count, by `tol`. `went` is the rate integrated over [a, b]; the parting is how far the
+    /// inverted path went in u, less that.
+    fn parting(
+        &mut self,
+        path: &Path,
+        a: f64,
+        b: f64,
+        went: f64,
+        tol: &Measures,
+        spent: &mut usize,
+    ) -> R<Option<(f64, Measures, Measures)>> {
+        if path.line.is_some() {
+            return Ok(None);
+        }
+        let (pa, pb) = (self.on(path, a)?, self.on(path, b)?);
+        // (round a period the inverted path may come a whole turn off, where its reference
+        // path is too coarse to say which turn: H is the same there, and the paths have not
+        // parted)
+        let parted = nearest(pb.0 - pa.0 - went, 0.0, self.s.periods()[0])?;
+        // rounding's, on any path, or a writer's tolerance's: no H is read for it
+        if parted.abs() <= 1e-12 * (1.0 + pymax(pa.0.abs(), pb.0.abs()))
+            || parted.abs() <= PARTED * went.abs()
+        {
+            return Ok(None);
+        }
+        // or rounding's by a pole, where u is an angle about a point the path comes near, and
+        // inverting a point there gives its angle no better than the point's own rounding over
+        // how far it is from the pole (|S_u|): it is the rate that is right there
+        let [cx, cy, cz] = self.c;
+        let reach = self.l + pymax(pymax(cx.abs(), cy.abs()), cz.abs());
+        for p in [pa, pb] {
+            let (_, su, _) = self.s.ev(p.0, p.1)?;
+            if parted.abs() * norm(su) <= 1e3 * f64::EPSILON * reach {
+                return Ok(None);
+            }
+        }
+        self.spend(spent)?;
+        let ha = self.h(pa.0, pa.1, 1.0)?;
+        self.spend(spent)?;
+        let hb = self.h(pb.0, pb.1, 1.0)?;
+        if (0..NM).all(|i| (parted * pymax(ha[i].abs(), hb[i].abs())).abs() <= tol[i]) {
+            return Ok(None);
+        }
+        Ok(Some((parted, ha, hb)))
+    }
+
+    /// Where a path is at `t`, on the (u, v) plane: its curve's point there inverted onto the
+    /// surface, and at its ends where the loop's next piece takes it up.
+    fn on(&self, path: &Path, t: f64) -> R<Uv> {
+        if path.line.is_none() {
+            if t == path.t0 {
+                return Ok(path.start());
+            }
+            if t == path.t1 {
+                return Ok(path.end());
+            }
+        }
+        let (u, v, _, _) = path.uv(&self.s, t)?;
+        Ok((u, v))
+    }
+
+    /// No less than the size of each measure's integrand F at any of `at`.
+    fn most(&mut self, at: &[Uv]) -> R<Measures> {
+        let mut out = [0.0; NM];
+        let [cx, cy, cz] = self.c;
+        for &(u, v) in at {
+            self.s.col(u, &[v], &mut self.points)?;
+            let [px, py, pz, nx, ny, nz] = self.points[0];
+            let r = (px - cx).hypot(py - cy).hypot(pz - cz);
+            let n = nx.hypot(ny).hypot(nz);
+            let here = [1.0, n, n * r / 3.0, n * r * r / 2.0, n * r * r * r / 2.0];
+            for i in 0..NM {
+                out[i] = pymax(out[i], here[[0, 1, 2, 3, 3, 3, 4, 4, 4, 4, 4, 4][i]]);
+            }
+        }
+        Ok(out)
+    }
+
+    /// -∫ H du along the straight line from `a` to `b` of the (u, v) plane, by Gauss-Kronrod's
+    /// rule over the whole of it; None where its two estimates are apart by more than `tol`.
+    fn chord(&mut self, a: Uv, b: Uv, tol: &Measures, spent: &mut usize) -> R<Option<Measures>> {
+        let (du, dv) = (b.0 - a.0, b.1 - a.1);
+        if du == 0.0 {
+            return Ok(Some([0.0; NM]));
+        }
+        let mut k = [0.0; NM];
+        let mut g = [0.0; NM];
+        for &(x, wk, wg) in kronrod() {
+            self.spend(spent)?;
+            let s = 0.5 + 0.5 * x;
+            let y = self.h(a.0 + s * du, a.1 + s * dv, -du)?;
+            for i in 0..NM {
+                k[i] += wk * y[i];
+                g[i] += wg * y[i];
+            }
+        }
+        if (0..NM).any(|i| (0.5 * (k[i] - g[i])).abs() > tol[i] + 1e-12 * (0.5 * k[i]).abs()) {
+            return Ok(None);
+        }
+        Ok(Some(k.map(|x| 0.5 * x)))
+    }
+
+    /// The integral over [a, b] of a path along two chords of it, from its point at `a` to its
+    /// point at the middle to its point at `b`; None where that is not near enough, and [a, b]
+    /// is to be halved. `went` is the path's rate integrated over [a, b], which is near enough
+    /// how far it goes there to say whether that is any part of a turn.
+    ///
+    /// The integral asks for no derivative of the path. It is that of the form H du along it,
+    /// and by Green's theorem it differs between two paths with the same ends by ∬ F du dv
+    /// over what lies between them. So the chords' integral is off by no more than F over the
+    /// triangle of the three points: little where the path is nearly straight, and little
+    /// wherever the surface's rates run together or one of them dies away, for F is the
+    /// surface's normal S_u × S_v, which is nothing there, however far along the fold the
+    /// points have landed. The triangle's area times twice the most of F at its corners is
+    /// held to a sixty-fourth of `tol` (the chords come no nearer than they are asked to, where
+    /// Gauss-Kronrod's rule, once near enough, is far nearer, and a path may be many panels of
+    /// them), and each chord's own quadrature to `tol`.
+    fn chords(
+        &mut self,
+        path: &Path,
+        a: f64,
+        b: f64,
+        went: f64,
+        tol: &Measures,
+        spent: &mut usize,
+    ) -> R<Option<Measures>> {
+        let mid = (b + a) / 2.0;
+        let (pa, mut pm, mut pb) = (self.on(path, a)?, self.on(path, mid)?, self.on(path, b)?);
+        // round a period, each point on the turn of the one before: a piece long enough to go
+        // half a turn is halved first
+        let periods = self.s.periods();
+        if let Some(per) = periods[0] {
+            if went.abs() > per / 8.0 {
+                return Ok(None);
+            }
+        }
+        pm = (
+            nearest(pm.0, pa.0, periods[0])?,
+            nearest(pm.1, pa.1, periods[1])?,
+        );
+        pb = (
+            nearest(pb.0, pm.0, periods[0])?,
+            nearest(pb.1, pm.1, periods[1])?,
+        );
+        let area = 0.5 * ((pm.0 - pa.0) * (pb.1 - pa.1) - (pm.1 - pa.1) * (pb.0 - pa.0)).abs();
+        let most = self.most(&[pa, pm, pb])?;
+        if (0..NM).any(|i| 2.0 * area * most[i] > tol[i] / 64.0) {
+            return Ok(None);
+        }
+        let Some(first) = self.chord(pa, pm, tol, spent)? else {
+            return Ok(None);
+        };
+        let Some(second) = self.chord(pm, pb, tol, spent)? else {
+            return Ok(None);
+        };
+        let mut out = [0.0; NM];
+        for i in 0..NM {
+            out[i] = first[i] + second[i];
+        }
+        Ok(Some(out))
     }
 
     /// -∫ H(u(t), v(t)) u'(t) dt along a path: nothing along a line of constant u (a seam, a
@@ -582,7 +812,7 @@ impl<'a> Face<'a> {
                 let (hw, mid) = ((b - a) / 2.0, (b + a) / 2.0);
                 let mut part = [0.0; NM];
                 for &(x, wg) in &rule {
-                    let y = self.f(path, mid + hw * x, &mut spent)?;
+                    let (y, _, _) = self.f(path, mid + hw * x, &mut spent)?;
                     for i in 0..NM {
                         part[i] += hw * wg * y[i];
                     }
