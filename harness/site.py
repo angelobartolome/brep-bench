@@ -304,11 +304,15 @@ def half_up(x, places):
 
 def seconds_text(x):
     """A time in seconds as the board's tables show it (board.js's secondsText): 0, 4.2 µs, 42 µs,
-    420 µs, 3.7 ms, 420 ms, 4.21 s, 12.3 s; above 0 but under a microsecond, <1 µs."""
+    420 µs, 3.7 ms, 420 ms, 4.21 s, 12.3 s; under a microsecond, 42 ns, 420 ns; above 0 but under
+    a nanosecond, <1 ns."""
     if x <= 0:
         return "0"
+    if x < 1e-9:
+        return "<1 ns"
     if x < 1e-6:
-        return "<1 µs"
+        ns = x * 1e9  # to two figures, as toPrecision(2) and Number() write it
+        return f"{half_up(ns, 1 if ns < 10 else 0 if ns < 100 else -1).normalize():f} ns"
     if x < 1e-3:
         us = x * 1e6  # to two figures, as toPrecision(2) and Number() write it
         return f"{half_up(us, 1 if us < 10 else 0 if us < 100 else -1).normalize():f} µs"

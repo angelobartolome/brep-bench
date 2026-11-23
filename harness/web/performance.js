@@ -6,7 +6,7 @@
 // Kernels keep kernels.json's order, but for the strip's rows, which its header puts in
 // alphabetical order or in order of their mean (kept in the address too).
 import { load, esc, casePage, kernelPage, failed, secondsText, megabytesText, solved, quantile,
-         option, placeTip, PARALLEL_FROM, FINE_TIME_FLOOR, GROUPS, groupOf } from './board.js';
+         option, placeTip, PARALLEL_FROM, FINEST_TIME_FLOOR, GROUPS, groupOf } from './board.js';
 import { sortable } from './sort.js';
 
 const main = document.getElementById('performance');
@@ -15,13 +15,14 @@ load().then(start, (e) => failed(main, e));
 // What can be measured of a run: each reads one of a kernel's lists (board.js), a value a case.
 // A time is the kernel's own, what starting its runner costs left out (`key`), unless the reader
 // asks for it counted (`raw`); `start` names the field of a kernel's start-up to show beside it.
-// `floor` is the least value a logarithmic scale and the ratios take (a microsecond for a time, as
+// `floor` is the least value a logarithmic scale and the ratios take (a nanosecond for a time, as
 // finely as the harness keeps them), and a `timed` measure's ratios each kernel's floor
 // for the case instead (board.js's `timeFloor`); `additive` says whether a total means anything,
 // `compare` whether a ratio of two kernels' does; `least` and `most` head the summary's ends,
 // `top` the runs that cost most; `higher` says more is better (else less is), for the summary's
 // shading.
-const timeTick = (x) => (x === 0 ? '0' : x < 0.001 ? `${Number((x * 1e6).toPrecision(1))} µs`
+const timeTick = (x) => (x === 0 ? '0' : x < 0.000001 ? `${Number((x * 1e9).toPrecision(1))} ns`
+  : x < 0.001 ? `${Number((x * 1e6).toPrecision(1))} µs`
   : x < 1 ? `${Number((x * 1000).toPrecision(1))} ms` : `${Math.round(x)} s`);
 const mbTick = (x) => (x < 1000 ? `${x} MB` : `${x / 1000} GB`);
 const ratioText = (x) => (x == null ? '–' : `${x.toFixed(x < 10 ? 2 : 1)}`);
@@ -31,19 +32,21 @@ const short = `Loading the runner is left out of both, and so are runs whose own
 const METRICS = [
   {
     key: 'built', raw: 'seconds', start: 'seconds', label: 'time', text: secondsText,
-    tick: timeTick, floor: FINE_TIME_FLOOR, timed: true, zero: true, additive: true,
+    tick: timeTick, floor: FINEST_TIME_FLOOR, timed: true, zero: true, additive: true,
     compare: true, least: 'fastest', most: 'slowest', top: 'The slowest runs',
     about: (counted) => (counted ? `Each dot is one case's wall-clock time, from starting the
       kernel's runner to its exit, starting it counted.` : `Each dot is one case's wall-clock
       time with loading the runner left out: the kernel's own time, building the solid and
       writing it as STEP where it can, not meshing or measuring it. The runner pauses once it has
       loaded and found its case and again once it has answered, and the harness times between
-      the two; a run that did not pause is taken less the runner's start-up, and one no longer
+      the two; where the runner's reply gives that time by its own clock, and no more than the
+      harness timed, that is taken, since stopping and continuing a process costs microseconds
+      of its own. A run that did not pause is taken less the runner's start-up, and one no longer
       than that is 0. The scale starts at 0 and is logarithmic from about 10 µs up.`),
   },
   {
     key: 'builtCpu', raw: 'cpu', start: 'cpu', label: 'CPU time', text: secondsText,
-    tick: timeTick, floor: FINE_TIME_FLOOR, timed: true, zero: true, additive: true,
+    tick: timeTick, floor: FINEST_TIME_FLOOR, timed: true, zero: true, additive: true,
     compare: true, least: 'least', most: 'most', top: 'The runs that spent the most CPU time',
     about: (counted) => `Each dot is the CPU time one case spent, user and system, over every
       thread${counted ? '' : `, between the runner's pauses (else less its start-up)`}: more than its
