@@ -321,11 +321,10 @@ def mass_of(out_step, timeout):
         p = subprocess.run(command + [out_step], capture_output=True, text=True,
                            timeout=timeout, cwd=ROOT)
     except subprocess.TimeoutExpired as e:
-        said_ = e.stdout or ""
-        early = last_json(said_.decode("utf-8", "replace") if isinstance(said_, bytes) else said_)
-        if early and "invalid" in early:
-            return {"invalid": early["invalid"]}
-        return {"error": f"not measured in {timeout:g} s"}
+        # what it said before it was stopped (bytes, whatever `text` says), if anything
+        said_ = e.stdout or b""
+        return (last_json(said_.decode("utf-8", "replace") if isinstance(said_, bytes) else said_)
+                or {"error": f"not measured in {timeout:g} s"})
     answer = last_json(p.stdout)
     if answer is None:
         said_ = (p.stderr.strip().splitlines() or ["no answer"])[-1]

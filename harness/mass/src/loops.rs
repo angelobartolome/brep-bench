@@ -19,7 +19,6 @@ pub fn nearest(x: f64, r: f64, period: Option<f64>) -> R<f64> {
 /// A piece of a loop on the (u, v) plane: along an edge's curve from t0 to t1, its points
 /// inverted onto the surface and followed continuously from a reference path, or straight from
 /// one point to another (`line`), along a singular line.
-#[derive(Clone)]
 pub struct Path {
     pub c: Option<Arc<Curve>>,
     pub t0: f64,
@@ -81,6 +80,14 @@ impl Path {
         let ((ta, a), (tb, b)) = (rf[lo], rf[hi]);
         let f = if tb != ta { (t - ta) / (tb - ta) } else { 0.0 };
         (a.0 + f * (b.0 - a.0), a.1 + f * (b.1 - a.1))
+    }
+
+    /// The path's points on the (u, v) plane, in order: a line's two ends, else its samples.
+    pub fn points(&self) -> impl Iterator<Item = Uv> + '_ {
+        let ends = self.line.map(|(a, b)| [a, b]);
+        ends.into_iter()
+            .flatten()
+            .chain(self.rf.iter().map(|x| x.1))
     }
 
     pub fn start(&self) -> Uv {
