@@ -2,10 +2,11 @@
 //!
 //!     brep-bench-springrep CASE OUT.stl [OUT.step]      (CASE as `boolean/napkin-ring`)
 //!     brep-bench-springrep --version
+//!     brep-bench-springrep --split [PREFIX]           (each case's build and STEP times, in ms)
 //!
 //! Builds the case with its own file, `src/cases/<category>/<name_snake>.rs`, then measures the
 //! solid with the kernel (exact volume and area, faces by surface, its validity check), meshes it
-//! into OUT.stl, writes it as STEP into OUT.step if asked (the kernel's own writer, `step::write`)
+//! into OUT.stl, writes it as STEP into OUT.step if asked (the kernel's own writer, `write_step`)
 //! and prints one line of JSON. Given OUT.step, the STEP is the whole answer: it is written, and
 //! nothing is measured or meshed unless the writer declines. A case that refuses, or a kernel
 //! operation that declines, is a refusal saying why. The runner never reads the case's description.
@@ -78,6 +79,13 @@ fn stl(b: &Brep, path: &str, volume: f64, area: f64) -> Result<(), String> {
     std::fs::write(path, out).map_err(|e| e.to_string())
 }
 
+/// The solid as STEP, by the kernel's own writer, with each edge its curve in space alone: no
+/// pcurves, which the standard leaves out as it likes and the harness does not read.
+fn write_step(b: &Brep, name: &str) -> Result<String, String> {
+    let options = springrep::step::WriteOptions::default().pcurves(false);
+    springrep::step::write_with(b, name, &options).map_err(|e| e.to_string())
+}
+
 fn refused(why: String) -> String {
     format!("{{\"status\":\"refused\",\"reason\":{}}}", json(&why))
 }
@@ -86,8 +94,7 @@ fn refused(why: String) -> String {
 /// asked for). A STEP written is the whole answer: nothing is then measured or meshed.
 fn measured(b: &Brep, out: &str, out_step: Option<&str>, case: &str) -> String {
     let step_error = out_step.and_then(|path| {
-        springrep::step::write(b, case)
-            .map_err(|e| e.to_string())
+        write_step(b, case)
             .and_then(|text| std::fs::write(path, text).map_err(|e| e.to_string()))
             .err()
     });
@@ -139,6 +146,29 @@ fn pause() {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn pause() {}
 
+/// Each case whose id starts with `prefix`, built and then written as STEP, each timed: one line
+/// a case, its id, the build's milliseconds and the writing's (`-` where it refused or declined).
+fn split(prefix: &str) {
+    use std::time::Instant;
+    let ms = |t: Instant| format!("{:.3}", t.elapsed().as_secs_f64() * 1e3);
+    for &(case, build) in cases::CASES.iter().filter(|(id, _)| id.starts_with(prefix)) {
+        let t = Instant::now();
+        let built = build();
+        let build_ms = ms(t);
+        let write_ms = match &built {
+            Ok(b) => {
+                let t = Instant::now();
+                match write_step(b, case) {
+                    Ok(_) => ms(t),
+                    Err(_) => "-".into(),
+                }
+            }
+            Err(_) => "-".into(),
+        };
+        println!("{case}\t{build_ms}\t{write_ms}");
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--version") {
@@ -147,6 +177,10 @@ fn main() {
             env!("SPRINGREP_REV"),
             env!("CARGO_PKG_VERSION")
         );
+        return;
+    }
+    if args.get(1).map(String::as_str) == Some("--split") {
+        split(args.get(2).map_or("", String::as_str));
         return;
     }
     let (case, out, out_step) = match &args[..] {
