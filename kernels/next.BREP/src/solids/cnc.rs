@@ -79,11 +79,21 @@ pub struct Program {
     tip: Vec3,
     /// The block's top: a move with its tip at or above it all along cuts nothing.
     top: f64,
-    pub swept: Vec<BrepSolid>,
-    /// What each of `swept` is: the move's path seen from above, and how deep.
+    /// Each move that reaches the block, kept to be swept when it is cut on its own: a program the
+    /// kernel's mill regions take whole never sweeps a move.
+    moves: Vec<Move>,
+    /// What each of `moves` is: the move's path seen from above, and how deep.
     paths: Vec<Path>,
-    /// Whether a slide along the axis was built by `lengthened`.
-    pub axial: bool,
+}
+
+/// A move of the cutter, as `Program::solid` sweeps it.
+#[derive(Clone, Copy, Debug)]
+enum Move {
+    /// A straight move from `from` by `by`; `along` the cutter's own axis.
+    Slide { from: Vec3, by: Vec3, along: bool },
+    /// A turn of the cutter standing at `from` through `part` about the upright line through
+    /// `centre`, anticlockwise or not.
+    Turn { from: Vec3, centre: [f64; 2], part: f64, anticlockwise: bool },
 }
 
 /// A move as seen from above, and its depth: what decides whether a deeper move of the same
@@ -122,11 +132,43 @@ impl Path {
 
 impl Program {
     pub fn new(cutter: Cutter, tip: Vec3, top: f64) -> Program {
-        Program { cutter, tip, top, swept: Vec::new(), paths: Vec::new(), axial: false }
+        Program { cutter, tip, top, moves: Vec::new(), paths: Vec::new() }
     }
 
-    fn tool(&self) -> brep_kernel::SolidTool {
-        revolved_tool(self.tip, p(0.0, 0.0, 1.0), p(1.0, 0.0, 0.0), &self.cutter.0)
+    fn tool_at(&self, tip: Vec3) -> brep_kernel::SolidTool {
+        revolved_tool(tip, p(0.0, 0.0, 1.0), p(1.0, 0.0, 0.0), &self.cutter.0)
+    }
+
+    /// What one move sweeps: the kernel's sweep of the cutter along it (a slide along the axis
+    /// the cutter lengthened where the sweep refuses it).
+    fn solid(&self, swept: &Move) -> Result<BrepSolid, Refusal> {
+        match *swept {
+            Move::Slide { from, by, along } => match sweep_solid(&self.tool_at(from), &slide_by(by)) {
+                Ok(body) => Ok(body),
+                Err(_) if along => self.lengthened(from, from.z.min(from.z + by.z), by.z.abs()),
+                Err(refusal) => Err(refusal.into()),
+            },
+            Move::Turn { from, centre, part, anticlockwise } => {
+                let motion = SolidMotion {
+                    steps: vec![ScrewStep {
+                        axis_origin: p(centre[0], centre[1], 0.0),
+                        // A clockwise turn is the anticlockwise one about the line pointing down:
+                        // the motion's range runs forward either way.
+                        axis_direction: p(0.0, 0.0, if anticlockwise { 1.0 } else { -1.0 }),
+                        turn: 1.0,
+                        advance: 0.0,
+                    }],
+                    from: 0.0,
+                    to: part,
+                };
+                Ok(sweep_solid(&self.tool_at(from), &motion)?)
+            }
+        }
+    }
+
+    /// Every move's solid, in order.
+    pub fn swept(&self) -> Result<Vec<BrepSolid>, Refusal> {
+        self.moves.iter().map(|m| self.solid(m)).collect()
     }
 
     /// The cutter with its tip at height `low` under the current tip, its top raised by `rise`:
@@ -134,7 +176,7 @@ impl Program {
     /// keeping its width) all the way up, so that each level of it is covered by the level it
     /// reaches at the top of the slide. Made by the kernel's revolve of that meridian, used only
     /// where the kernel's sweep of a solid refuses the slide (`axial`).
-    fn lengthened(&self, low: f64, rise: f64) -> Result<BrepSolid, Refusal> {
+    fn lengthened(&self, tip: Vec3, low: f64, rise: f64) -> Result<BrepSolid, Refusal> {
         let top = self.cutter.0.iter().fold(0.0f64, |m, piece| match *piece {
             Piece::Line { from, to } => m.max(from[1]).max(to[1]),
             Piece::Arc { centre, radius, .. } => m.max(centre[1] + radius),
@@ -144,7 +186,7 @@ impl Program {
             Piece::Line { from, to } => Piece::Line { from: lift(from), to: lift(to) },
             arc => arc,
         }).collect();
-        let foot = p(self.tip.x, self.tip.y, low);
+        let foot = p(tip.x, tip.y, low);
         let (x, z) = (p(1.0, 0.0, 0.0), p(0.0, 0.0, 1.0));
         Ok(revolve_profile_brep(&planar(&pieces, foot, x, z)?, foot, z, TAU)?)
     }
@@ -169,15 +211,7 @@ impl Program {
             } else {
                 Path::Other
             });
-            match sweep_solid(&self.tool(), &slide_by(d)) {
-                Ok(body) => self.swept.push(body),
-                Err(refusal) if along => {
-                    self.axial = true;
-                    let _ = refusal;
-                    self.swept.push(self.lengthened(self.tip.z.min(to.z), d.z.abs())?);
-                }
-                Err(refusal) => return Err(refusal.into()),
-            }
+            self.moves.push(Move::Slide { from: self.tip, by: d, along });
         }
         self.tip = to;
         Ok(self)
@@ -204,24 +238,11 @@ impl Program {
                 let (c, s) = ((turn / pieces as f64 * piece as f64).cos(), (turn / pieces as f64 * piece as f64).sin());
                 let (x, y) = (self.tip.x - centre[0], self.tip.y - centre[1]);
                 let from = p(centre[0] + c * x - s * y, centre[1] + s * x + c * y, self.tip.z);
-                let tool = revolved_tool(from, p(0.0, 0.0, 1.0), p(1.0, 0.0, 0.0), &self.cutter.0);
-                let motion = SolidMotion {
-                    steps: vec![ScrewStep {
-                        axis_origin: p(centre[0], centre[1], 0.0),
-                        // A clockwise turn is the anticlockwise one about the line pointing down:
-                        // the motion's range runs forward either way.
-                        axis_direction: p(0.0, 0.0, if anticlockwise { 1.0 } else { -1.0 }),
-                        turn: 1.0,
-                        advance: 0.0,
-                    }],
-                    from: 0.0,
-                    to: part,
-                };
                 let (c1, s1) = ((turn / pieces as f64).cos(), (turn / pieces as f64).sin());
                 let (u, v) = (from.x - centre[0], from.y - centre[1]);
                 let end = [centre[0] + c1 * u - s1 * v, centre[1] + s1 * u + c1 * v];
                 self.paths.push(Path::Level { from: [from.x, from.y], to: end, about: Some((centre, turn / pieces as f64)), z: self.tip.z });
-                self.swept.push(sweep_solid(&tool, &motion)?);
+                self.moves.push(Move::Turn { from, centre, part, anticlockwise });
             }
         }
         let (c, s) = (turn.cos(), turn.sin());
@@ -309,9 +330,9 @@ pub fn cut_in_turn(block: BrepSolid, top: f64, programs: Vec<Program>) -> Result
                 continue;
             }
         }
-        for (solid, keep) in program.swept.into_iter().zip(keep) {
+        for (swept, keep) in program.moves.iter().zip(keep) {
             if keep {
-                body = boolean_operation_nary(&[body, solid], BooleanOperation::Subtract)?;
+                body = boolean_operation_nary(&[body, program.solid(swept)?], BooleanOperation::Subtract)?;
             }
         }
     }
@@ -320,7 +341,10 @@ pub fn cut_in_turn(block: BrepSolid, top: f64, programs: Vec<Program>) -> Result
 
 /// `block` less everything every program swept.
 pub fn cut(block: BrepSolid, programs: Vec<Program>) -> Result<BrepSolid, Refusal> {
-    let swept: Vec<_> = programs.into_iter().flat_map(|program| program.swept).collect();
+    let mut swept = Vec::new();
+    for program in &programs {
+        swept.extend(program.swept()?);
+    }
     // The kernel's n-ary boolean takes at most 255 operands: cut in batches.
     let mut result = Ok(block);
     let mut swept = swept;

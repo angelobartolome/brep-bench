@@ -37,10 +37,37 @@ pub const RIM: u32 = 1 << 31;
 fn best<G: Generating>(gear: &G, x: Vec3) -> (f64, u32) {
     let Some((a, b, step)) = gear.window(x) else { return (-1.0, 0) };
     let n = ((b - a) / step).ceil().max(2.0) as usize;
-    let samples: Vec<f64> = (0..=n).map(|i| gear.margin(x, a + (b - a) * i as f64 / n as f64).0).collect();
-    // Refine round the three best samples.
-    let mut order: Vec<usize> = (0..=n).collect();
-    order.sort_by(|&i, &j| samples[j].total_cmp(&samples[i]));
+    let whole = || ranked(gear, x, a, b, n, 0, n);
+    let (order, top) = match carried(gear, x, a, b, n) {
+        Some(order) if std::env::var("GEAR_CARRY_CHECK").is_ok() => {
+            // Read both ways; the tracer uses only the sign of the margin and what binds.
+            let (full, carried_top) = (whole(), refine(gear, x, a, b, n, &order));
+            let top = refine(gear, x, a, b, n, &full);
+            CARRY_CHECKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if (top.0 >= 0.0) != (carried_top.0 >= 0.0) || top.1 != carried_top.1 {
+                CARRY_MISSED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            (full, top)
+        }
+        Some(order) => {
+            let top = refine(gear, x, a, b, n, &order);
+            (order, top)
+        }
+        None => {
+            let order = whole();
+            let top = refine(gear, x, a, b, n, &order);
+            (order, top)
+        }
+    };
+    if let Some(&i) = order.first() {
+        LAST.with(|last| last.set(Some((x, a + (b - a) * i as f64 / n as f64))));
+    }
+    top
+}
+
+/// The best margin over the three samples `order`, each refined by golden sections over the
+/// samples either side of it, and what binds there.
+fn refine<G: Generating>(gear: &G, x: Vec3, a: f64, b: f64, n: usize, order: &[usize]) -> (f64, u32) {
     let mut top = (f64::NEG_INFINITY, 0);
     for &i in order.iter().take(3) {
         let lo = a + (b - a) * (i.max(1) - 1) as f64 / n as f64;
@@ -70,6 +97,50 @@ fn best<G: Generating>(gear: &G, x: Vec3) -> (f64, u32) {
         }
     }
     top
+}
+
+thread_local! {
+    /// The last point `best` read and the time of its best sample: the next point, a hair along
+    /// the same ray or the next one, has its contact near there.
+    static LAST: std::cell::Cell<Option<(Vec3, f64)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Points of the tracer read at once in check mode (`GEAR_CARRY_CHECK`), and those whose three
+/// best samples the carried window read otherwise than the whole scan.
+pub static CARRY_CHECKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub static CARRY_MISSED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many samples either side of the carried time are read.
+const CARRY_SPAN: usize = 40;
+
+/// The three best of the samples `margin(x, a + (b - a)·i/n)` for i in lo..=hi, best first, ties
+/// by index (the stable sort of them all).
+fn ranked<G: Generating>(gear: &G, x: Vec3, a: f64, b: f64, n: usize, lo: usize, hi: usize) -> Vec<usize> {
+    let samples: Vec<f64> = (lo..=hi).map(|i| gear.margin(x, a + (b - a) * i as f64 / n as f64).0).collect();
+    let mut order: Vec<usize> = (lo..=hi).collect();
+    order.sort_by(|&i, &j| samples[j - lo].total_cmp(&samples[i - lo]));
+    order.truncate(3);
+    order
+}
+
+/// The three best samples read only within `CARRY_SPAN` of the last point's best time, where that
+/// point is near and its time lies in this window, and none of the three sits at an edge of the
+/// stretch short of the window's own ends; `None` otherwise (or with `GEAR_CARRY=0`), for the
+/// whole scan. Its use is checked by `GEAR_CARRY_CHECK`: every point read both ways, counted
+/// where the sign of the best margin or what binds differs (all the tracer reads of it).
+fn carried<G: Generating>(gear: &G, x: Vec3, a: f64, b: f64, n: usize) -> Option<Vec<usize>> {
+    if std::env::var("GEAR_CARRY").as_deref() == Ok("0") {
+        return None;
+    }
+    let (px, pt) = LAST.with(|last| last.get())?;
+    if x.sub(px).length() > 0.5 || !(pt >= a && pt <= b) {
+        return None;
+    }
+    let c = ((pt - a) / (b - a) * n as f64).round() as usize;
+    let (lo, hi) = (c.saturating_sub(CARRY_SPAN), (c + CARRY_SPAN).min(n));
+    let order = ranked(gear, x, a, b, n, lo, hi);
+    let at_edge = order.iter().any(|&i| (i == lo && lo > 0) || (i == hi && hi < n));
+    (!at_edge && order.len() == 3.min(hi - lo + 1)).then_some(order)
 }
 
 /// One slice of the space: a surface given by `place`, from coordinates (a, b) in it, seen from
@@ -385,7 +456,6 @@ pub fn runs<G: Generating>(gear: &G, point: impl Fn(f64) -> Vec3, lo: f64, hi: f
 /// each copy shares with the next. A cell is its neighbour turned, so the faces left out on either
 /// side of a divider are the same face, and its edges are each other's.
 pub fn pattern_sewn(cell: &BrepSolid, step: f64, count: usize, divider: &dyn Fn(Vec3) -> bool) -> Result<BrepSolid, Refusal> {
-    use crate::solids::sweep::{moved, turn_z};
     use std::collections::HashSet;
     let [shell] = cell.shells.as_slice() else {
         return Err(Refusal::from("pattern_sewn: the cell is not one shell"));
@@ -406,47 +476,12 @@ pub fn pattern_sewn(cell: &BrepSolid, step: f64, count: usize, divider: &dyn Fn(
     if dropped.is_empty() {
         return Err(Refusal::from("pattern_sewn: no face of the cell lies on its dividers"));
     }
-    let mut soup = cell.clone();
-    soup.shells[0].faces.clear();
-    soup.vertices.clear();
-    soup.edges.clear();
-    // Ids made distinct per copy (a copy's ids are the cell's).
-    let span = 1 + cell.vertices.iter().map(|v| v.id).chain(cell.edges.iter().map(|e| e.id)).chain(
-        shell.faces.iter().flat_map(|f| std::iter::once(f.id).chain(f.loops.iter().flat_map(|l| std::iter::once(l.id).chain(l.coedges.iter().map(|c| c.id))))),
-    ).max().unwrap_or(0);
-    for k in 0..count as u64 {
-        let copy = moved(cell, turn_z(step * k as f64, Vec3::new(0.0, 0.0, 0.0))?)?;
-        let offset = (k + 1) * span;
-        let mut used_edges = HashSet::new();
-        for face in copy.shells[0].faces.iter().filter(|f| !dropped.contains(&f.id)) {
-            let mut f = face.clone();
-            f.id += offset;
-            for l in &mut f.loops {
-                l.id += offset;
-                for c in &mut l.coedges {
-                    used_edges.insert(c.edge_id);
-                    c.id += offset;
-                    c.edge_id += offset;
-                }
-            }
-            soup.shells[0].faces.push(f);
-        }
-        let mut used_vertices = HashSet::new();
-        for e in copy.edges.iter().filter(|e| used_edges.contains(&e.id)) {
-            let mut e = e.clone();
-            used_vertices.extend([e.start_vertex_id, e.end_vertex_id]);
-            e.id += offset;
-            e.start_vertex_id += offset;
-            e.end_vertex_id += offset;
-            soup.edges.push(e);
-        }
-        for v in copy.vertices.iter().filter(|v| used_vertices.contains(&v.id)) {
-            let mut v = v.clone();
-            v.id += offset;
-            soup.vertices.push(v);
-        }
-    }
-    let (sewn, report) = brep_kernel::sew_solid(&soup, 1e-7)?;
+    // The kernel copies the kept faces round the z axis (the same turn as
+    // turn_z, ids offset per copy as the soup had them) and sews them; it reads
+    // the solid's sign from one copy, the pattern turning the rest onto it.
+    let kept: Vec<u64> = shell.faces.iter().filter(|f| !dropped.contains(&f.id)).map(|f| f.id).collect();
+    let (sewn, report, _copies) =
+        brep_kernel::sew_rotated_copies(cell, &kept, Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0), step, count, 1e-7)?;
     // (A one-use edge left open is a pole's collapsed edge where the cells meet on the axis, which
     // the validator admits; anything else it reports.)
     if let Some(issue) = report.issues.first() {
