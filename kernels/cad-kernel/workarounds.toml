@@ -51,6 +51,7 @@
 "fillet/notched-cube-inside-corner" = "no rounding of edges meeting at a corner in one call"
 "fillet/plate-rim-over-a-blended-lug" = "no round across a rolled blend (the blends rounded in the plan)"
 "fillet/variable-radius-concave-edge" = "no variable-radius round"
+"fillet/variable-radius-edge" = "no variable-radius round"
 "fillet/variable-radius-obtuse-edge" = "no variable-radius round"
 "fillet/variable-radius-to-a-point" = "no variable-radius round"
 "geometry/elliptic-cylinder" = "no ellipse in a profile"
