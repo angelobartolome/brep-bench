@@ -556,11 +556,7 @@ def case_page(c, registry, results, drawing, prev=None, after=None, v=""):
             # surface, its edges drawn between them; only where it has no STEP file to show, or
             # the file cannot be read, its runner's triangles instead
             out.append("<div id=view hidden" + (f" data-reference='{ref_en['stl']}'" if ref_en
-                                                else "") + "><div class=stage><canvas id=viewer></canvas>"
-                       # turning while the solid is read and meshed (and while the viewer's
-                       # own script loads), so the canvas is not left blank
-                       "<div class=spinner id=loading role=status "
-                       "aria-label='Loading the 3D model'></div></div>"
+                                                else "") + "><canvas id=viewer></canvas>"
                        "<p class=legend id=kinds hidden></p>"
                        # a B-spline surface's control net, drawn over its faces at a click
                        "<p class=legend id=nets hidden><button type=button class=chip "
@@ -964,9 +960,6 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const canvas = document.getElementById('viewer');
-// the spinner over the canvas, turning until the solid asked for is drawn
-const spinner = document.getElementById('loading');
-const loading = (on) => { spinner.hidden = !on; };
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 const scene = new THREE.Scene();
@@ -1479,15 +1472,9 @@ function place(group, fit) {
 function showMesh(current, why, fit) {
   marks('mesh');
   meshWhy.textContent = why;
-  loading(true);
   build(current.src).then((group) => {
     if (current !== wanted) return;  // another entry was picked while this one loaded
     place(group, fit);
-    loading(false);
-  }, (error) => {
-    if (current !== wanted) return;
-    meshWhy.textContent = `Its triangles could not be shown: ${error.message}.`;
-    loading(false);
   });
 }
 
@@ -1500,11 +1487,9 @@ function show(fit) {
   }
   marks('faces');
   facesNote.textContent = 'Reading the STEP file…';
-  loading(true);
   buildFaces(current.step).then((group) => {
     if (current !== wanted) return;
     place(group, fit);
-    loading(false);
     facesNote.textContent = facesNoteText;
     describe(group);
   }, (error) => {
@@ -1514,7 +1499,6 @@ function show(fit) {
         + 'triangles instead.', fit);
     } else {
       facesNote.textContent = `The STEP file could not be shown: ${error.message}.`;
-      loading(false);
     }
   });
 }
@@ -1534,7 +1518,7 @@ function picked(detail) {
   const any = entry.src || entry.step;
   renderer.setAnimationLoop(any ? frame : null);
   overlay();
-  if (!any) { loading(false); return; }
+  if (!any) return;
   show(!fitted);
   fitted = true;
 }
