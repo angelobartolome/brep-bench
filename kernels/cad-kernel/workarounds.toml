@@ -1,6 +1,7 @@
 # The cases cad-kernel builds by working around a feature it lacks, and what that is
 # (SPEC.md, "A workaround is flagged").
 
+"boolean/elbow-tighter-than-its-tube" = "no revolution of a section crossing its axis"
 "chamfer/ball-in-conical-seat-distance-1-angle-45" = "no chamfer by a distance and an angle"
 "chamfer/ball-in-conical-seat-distance-2-angle-30" = "no chamfer by a distance and an angle"
 "chamfer/ball-in-conical-seat-distance-3-angle-15" = "no chamfer by a distance and an angle"
@@ -70,6 +71,9 @@
 "shell/ball-tipped-cone-hollowed-past-its-tip" = "no shell of a round past its radius"
 "shell/ball-tipped-cone-shelled-open-past-its-tip" = "no shell of a round past its radius"
 "shell/frustum-bottom-rounded-shelled-open-past-its-round" = "no shell of a round past its radius"
+"shell/hemisphere-shelled-outward-open-at-its-dome" = "no outward shell open at a curved face"
+"shell/hemisphere-shelled-outward-open-at-its-dome-by-a-half" = "no outward shell open at a curved face"
+"shell/hemisphere-shelled-outward-open-at-its-dome-by-two" = "no outward shell open at a curved face"
 "shell/puck-bottom-rounded-shelled-open-past-its-round" = "no shell of a round past its radius"
 "shell/rounded-frustum-hollowed-past-its-rounds" = "no shell of a round past its radius"
 "shell/rounded-hemisphere-hollowed-past-its-round" = "no shell of a round past its radius"
