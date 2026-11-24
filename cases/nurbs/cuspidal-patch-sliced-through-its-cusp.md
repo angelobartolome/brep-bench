@@ -5,12 +5,12 @@ origin = "geomsolver #1013: the crossed tumbling tori's Booleans, one capability
 
 [volume]
 value = 0.51031272172170669
-exact = "∫ over 1/100 ≤ x ≤ 1 of the column under min(f, 11y/10), f = 1/2 + x^{3/2} + y/10, the two meeting at y* = 1/2 + x^{3/2}: (11/20)y*² + f(x, y*)(1 − y*) + (1 − y*²)/20 for x < 2^{−2/3}, else 11/20 (by quadrature, to 1e-16)"
+exact = "∫ over 1/100 ≤ x ≤ 1 of the column under min(f, 11y/10), f = 1/2 + x^{3/2} + y/10, the two meeting at y* = 1/2 + x^{3/2}: (11/20)y*² + f(x, y*)(1 − y*) + (1 − y*²)/20 for x < 2^{−2/3}, else 11/20 (by mpmath quadrature)"
 tex = '\int_{1/100}^{1} \int_0^1 \min\!\left(\tfrac12 + x^{3/2} + \tfrac{y}{10},\ \tfrac{11y}{10}\right) dy\,dx'
 
 [area]
 value = 4.2949491490074952
-exact = "the top: the plane's part √(221)/10 times its plan, and the patch's ∫∫√(101/100 + 9x/4) over the rest, the floor 0.99, the walls x = 1/100, x = 1 and y = 1 each ∫ of the height along it (by quadrature, to 1e-16)"
+exact = "the top: the plane's part √(221)/10 times its plan, and the patch's ∫∫√(101/100 + 9x/4) over the rest, the floor 0.99, the walls x = 1/100, x = 1 and y = 1 each ∫ of the height along it (by mpmath quadrature)"
 +++
 
 A block under a curved top, sliced by a plane. The top is trimmed on a Bézier patch that runs on

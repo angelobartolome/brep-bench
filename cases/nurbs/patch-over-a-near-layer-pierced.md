@@ -10,7 +10,7 @@ tex = '\iint_{A} f\,dA - \int_{2/5}^{7/10}\!\!\int_{3/10}^{3/5} f\,dy\,dx,\quad 
 
 [area]
 value = 5.0938677482524649
-exact = "the top ∫∫√(101/100 + (3x/5 + 3√x/200)²) over its plan less the hole (by quadrature, to 1e-16), the floor 0.82, and each of the eight walls ∫ of f along it"
+exact = "the top ∫∫√(101/100 + (3x/5 + 3√x/200)²) over its plan less the hole (by mpmath quadrature), the floor 0.82, and each of the eight walls ∫ of f along it"
 tex = '\iint \sqrt{\tfrac{101}{100} + \left(\tfrac{3x}{5} + \tfrac{3\sqrt{x}}{200}\right)^2}\,dA + 0.82 + \sum_{\text{walls}} \int f\,ds'
 +++
 

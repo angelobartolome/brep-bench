@@ -5,12 +5,12 @@ origin = "geomsolver #1013: the crossed tumbling tori's Booleans, one capability
 
 [volume]
 value = 0.5244906492156999
-exact = "∫∫ min(f, 10(13/250 + x − y))⁺ over 1/1000 ≤ x, y ≤ 1, f = 1/2 + ∛(xy) (by quadrature split where the plane meets the patch and the floor, to 1e-16)"
+exact = "∫∫ min(f, 10(13/250 + x − y))⁺ over 1/1000 ≤ x, y ≤ 1, f = 1/2 + ∛(xy) (by mpmath quadrature, split where the plane meets the patch and the floor)"
 tex = '\int_{1/1000}^{1}\!\!\int_{1/1000}^{1} \max\!\left(0,\ \min\!\left(\tfrac12 + \sqrt[3]{xy},\ 10\left(\tfrac{13}{250} + x - y\right)\right)\right) dy\,dx'
 
 [area]
 value = 4.591931211856204
-exact = "the patch's ∫∫√(1 + (∛(xy)/3x)² + (∛(xy)/3y)²) where it lies below the plane, the plane's √201 times its plan, the floor where the plane stands above it, and the four walls ∫ of the height along each (by quadrature, to 1e-15)"
+exact = "the patch's ∫∫√(1 + (∛(xy)/3x)² + (∛(xy)/3y)²) where it lies below the plane, the plane's √201 times its plan, the floor where the plane stands above it, and the four walls ∫ of the height along each (by mpmath quadrature)"
 +++
 
 A block under a curved top, sliced by a plane. The top is trimmed on a Bézier patch that pinches
