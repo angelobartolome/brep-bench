@@ -21,6 +21,7 @@ mod sketch;
 mod tumble;
 mod gears;
 mod cnc;
+mod patches;
 
 /// Every case file, found by `build.rs`.
 mod cases {
